@@ -1,31 +1,75 @@
 # Vision Pipeline
 
-Vision integration では「座標の正しさ」と「リアルタイム結果の鮮度」を別々に保証します。
+CameraGeometryKit は iOS 18+ / Swift 6 専用です。Vision も iOS 18 で導入された Swift-native API のみを使います。旧 request-handler 互換レイヤーは持ちません。
 
-## Geometry
+## Request
 
-Vision normalized rect は左下原点です。Vision boundary で `VisionGeometry` を使って `CanonicalRect` へ変換します。raw Vision rect を通常の UI state に保存して後で flip する設計にはしません。
+Swift-native request は `ImageProcessingRequest` に準拠し、`CVPixelBuffer` に直接 `perform()` できます。
 
-## Frame semantics
+```swift
+let request = DetectFaceRectanglesRequest()
+let observations = try await request.perform(
+    on: frame.pixelBuffer,
+    orientation: frame.geometry.visionOrientation
+)
+```
 
-VideoDataOutput connection に resolved capture rotation と canonical non-mirror policy が適用済みなら、`CameraFrame.pixelBuffer` は upright canonical analysis data として扱います。`appliedVideoRotationAngle` は「すでに適用された値」で、後段への再回転命令ではありません。
+## `CameraVisionWorker`
 
-## Bounded scheduling
+`CameraVisionWorker<Value>` は actor です。
 
-`CameraFrameStream.frames` は pending を最新1frameだけ保持します。逐次 analyzer が遅くても FIFO backlog は成長しません。
+- expensive operation は1件だけ in-flight
+- pending は最新1 frameだけ
+- Swift Task ベース
+- invalidate 時に Task cancellation を要求
+- `CameraFrameID` / timestamp を保持
+- generation で stale result を排除
+- MainActor gate を通して delivery
 
-重い解析を MainActor や capture callback で実行しません。
+```swift
+let faces = CameraVisionWorker<[CanonicalRect]>(
+    makeRequest: { DetectFaceRectanglesRequest() },
+    map: { observations in
+        observations.map {
+            VisionGeometry.canonicalRect(from: $0.boundingBox)
+        }
+    },
+    delivery: { output in
+        faceBoxes = output.value
+    }
+)
 
-## Stale-result protection
+for await frame in camera.frameStream.frames {
+    await faces.submit(frame)
+}
+```
 
-`WorkGeneration` で解析開始時の semantic configuration を snapshot し、publish 直前にもう一度 current generation と比較します。camera/analyzer configuration change や screen departure で generation を進めます。
+camera identity、analyzer settings、画面の所有者が変わったら:
+
+```swift
+await faces.invalidate()
+```
 
 Cancellation は resource control、generation identity が correctness guarantee です。
 
-## Frame identity
+## Geometry
 
-他の派生結果と alignment が必要なら source `CameraFrameID` と timestamp を保持します。「最近のRGB」と「最近のVision」は same accepted frame とは限りません。
+Swift-native Vision observation は `NormalizedPoint` / `NormalizedRect` / `BoundingBoxProviding` などを使います。Vision は normalized 左下原点、CameraGeometryKit canonical は normalized 左上原点です。
 
-## Result boundary
+```swift
+let canonical = VisionGeometry.canonicalRect(from: observation.boundingBox)
+```
 
-Vision result は canonical geometry と UI に必要な最小 field だけを持つ Sendable value へ変換します。Vision 固有の座標規約を SwiftUI state に持ち込みません。
+raw Vision geometry を通常の UI state に持ち込まず、Vision boundary で canonical へ変換します。
+
+## Frame semantics
+
+`CameraFrame.geometry.visionOrientation` を request に渡します。`appliedVideoRotationAngle` は AVFoundation がすでに適用した回転の記録であり、後段への再回転命令ではありません。
+
+## 参考
+
+- Apple Vision documentation
+- WWDC24「VisionフレームワークにおけるSwiftの機能強化」
+- `ImageProcessingRequest`
+- `DetectFaceRectanglesRequest`
+- `NormalizedRect`
