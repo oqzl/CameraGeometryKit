@@ -26,6 +26,7 @@ mirroring   none
 - Swift 6
 - Xcode with an iOS 18+ SDK
 - No third-party dependencies
+- No backward-compatibility layer for pre-iOS-18 Vision APIs
 
 ## What this package owns
 
@@ -38,8 +39,9 @@ mirroring   none
 - per-frame identity, timestamp, rotation, mirroring, and dimensions
 - `AVCaptureDevice.RotationCoordinator` wrappers
 - explicit preview and analysis mirroring policies
-- Vision normalized-coordinate conversion
-- bounded generic Vision work with generation-safe delivery
+- Swift-native Vision normalized geometry conversion
+- Swift Concurrency-based live Vision scheduling
+- generation-safe result delivery
 - diagnostics primitives
 - device-by-device validation records
 
@@ -172,23 +174,22 @@ CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: analysisCo
 
 ## Vision
 
-Vision normalized geometry uses a lower-left origin. Convert it at the Vision boundary:
+CameraGeometryKit uses the Swift-native Vision API available on iOS 18+. There is no legacy Vision request-handler compatibility layer.
+
+Vision observations expose normalized geometry with types such as `NormalizedRect`. Convert to canonical geometry at the Vision boundary:
 
 ```swift
-let canonicalBox = VisionGeometry.canonicalRect(
-    fromVisionNormalized: observation.boundingBox
-)
+let canonicalBox = VisionGeometry.canonicalRect(from: observation.boundingBox)
 ```
 
-For live work, use `CameraVisionWorker<Value>`. It composes the low-level Vision pipeline with generation tracking, one in-flight request, newest-one pending work, frame identity, and a final MainActor delivery gate.
+For live work, use `CameraVisionWorker<Value>`. It is an actor that keeps one expensive operation in flight, retains only the newest pending frame, uses Task cancellation for obsolete work, preserves frame identity, and blocks stale delivery with a generation gate.
 
 ```swift
 let faces = CameraVisionWorker<[CanonicalRect]>(
-    makeRequest: { VNDetectFaceRectanglesRequest() },
-    extract: { request in
-        let observations = request.results as? [VNFaceObservation] ?? []
-        return observations.map {
-            VisionGeometry.canonicalRect(fromVisionNormalized: $0.boundingBox)
+    makeRequest: { DetectFaceRectanglesRequest() },
+    map: { observations in
+        observations.map {
+            VisionGeometry.canonicalRect(from: $0.boundingBox)
         }
     },
     delivery: { output in
@@ -196,13 +197,15 @@ let faces = CameraVisionWorker<[CanonicalRect]>(
     }
 )
 
-faces.submit(frame)
+for await frame in camera.frameStream.frames {
+    await faces.submit(frame)
+}
 ```
 
 When camera identity, analyzer settings, or the consuming screen changes:
 
 ```swift
-faces.invalidate()
+await faces.invalidate()
 ```
 
 Concrete request choice and semantic result mapping stay in the app. See [Vision Pipeline](docs/VISION_PIPELINE.md).
@@ -232,9 +235,11 @@ See [Prohibited Patterns](docs/PROHIBITIONS.md). The short version:
 
 - no per-device angle tables
 - no UI-orientation-to-camera-angle conversion
+- no deprecated `videoOrientation` path
 - no double rotation
 - no “front means mirrored media” assumption
-- no raw Vision coordinates in UI state
+- no legacy Vision request-handler path
+- no raw Vision geometry in UI state
 - no unbounded frame queues
 - no heavy processing on MainActor or capture callbacks
 - no stale result publication after a generation changes
