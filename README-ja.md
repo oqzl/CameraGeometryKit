@@ -26,6 +26,7 @@ y           上 → 下
 - Swift 6
 - iOS 18+ SDK を含む Xcode
 - 外部依存なし
+- iOS 18 より前の Vision API 互換レイヤーなし
 
 ## このパッケージが担当するもの
 
@@ -38,8 +39,9 @@ y           上 → 下
 - frame ID / timestamp / rotation / mirror / dimensions
 - `AVCaptureDevice.RotationCoordinator` の共通処理
 - Preview と Analysis の mirror policy 分離
-- Vision normalized 座標変換
-- bounded な generic Vision work と generation-safe delivery
+- Swift-native Vision geometry の canonical 変換
+- Swift Concurrency ベースの live Vision scheduling
+- generation-safe な result delivery
 - diagnostics
 - 機種別の実機検証記録
 
@@ -148,23 +150,22 @@ Preview の鏡像表示と、保存・解析画像の identity は別物です�
 
 ## Vision
 
-Vision normalized 座標は左下原点なので、境界で canonical へ変換します。
+CameraGeometryKit は iOS 18+ の Swift-native Vision API を使います。旧 request-handler 互換レイヤーは持ちません。
+
+Vision observation の normalized geometry は `NormalizedRect` などで表現されます。Vision 境界で canonical へ変換します。
 
 ```swift
-let canonicalBox = VisionGeometry.canonicalRect(
-    fromVisionNormalized: observation.boundingBox
-)
+let canonicalBox = VisionGeometry.canonicalRect(from: observation.boundingBox)
 ```
 
-Live Vision の標準入口は `CameraVisionWorker<Value>` です。低レベル Vision pipeline に generation tracking、1 in-flight、最新1件 pending、frame identity、MainActor delivery の最終 gate を重ねます。
+Live Vision の標準入口は `CameraVisionWorker<Value>` です。actor として、expensive operation は1件だけ in-flight、pending は最新1 frameだけ、obsolete work は Task cancellation を要求し、frame identity と generation-safe delivery を維持します。
 
 ```swift
 let faces = CameraVisionWorker<[CanonicalRect]>(
-    makeRequest: { VNDetectFaceRectanglesRequest() },
-    extract: { request in
-        let observations = request.results as? [VNFaceObservation] ?? []
-        return observations.map {
-            VisionGeometry.canonicalRect(fromVisionNormalized: $0.boundingBox)
+    makeRequest: { DetectFaceRectanglesRequest() },
+    map: { observations in
+        observations.map {
+            VisionGeometry.canonicalRect(from: $0.boundingBox)
         }
     },
     delivery: { output in
@@ -172,13 +173,15 @@ let faces = CameraVisionWorker<[CanonicalRect]>(
     }
 )
 
-faces.submit(frame)
+for await frame in camera.frameStream.frames {
+    await faces.submit(frame)
+}
 ```
 
 camera identity、analyzer settings、画面の消費主体が変わったら:
 
 ```swift
-faces.invalidate()
+await faces.invalidate()
 ```
 
 具体的な Vision request と semantic result mapping はアプリ側に残します。詳細は [Vision Pipeline](docs-ja/VISION_PIPELINE.md)。
@@ -199,9 +202,11 @@ Preview layer の focus/exposure point は canonical image space ではありま
 
 - 機種別角度表を作らない
 - UI orientation から camera angle を計算しない
+- deprecated な `videoOrientation` 系を使わない
 - 二重回転しない
 - Front camera = 保存物も mirror と決めつけない
-- Vision raw 座標を UI state に流さない
+- 旧 Vision request-handler 経路を使わない
+- Vision raw geometry を UI state に流さない
 - フレームを無制限にキューしない
 - MainActor / capture callback で重い処理をしない
 - generation 変更後の旧結果を publish しない
