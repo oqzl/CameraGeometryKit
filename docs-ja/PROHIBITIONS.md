@@ -107,3 +107,11 @@ Depth 等が必須なら、欠損時に無関係な current RGB へ黙って fal
 ## 25. Simulatorだけで検証完了
 
 front camera、TrueDepth、rotation、mirror、機種固有 camera 挙動は実機で確認し、`docs-ja/validation/<device>/` に記録します。
+
+## 26. Product code から `CameraCaptureSession.captureSession` を変更する
+
+公開 session は `AVCaptureVideoPreviewLayer` の接続と参照用です。外側から input/output の追加削除、camera switch、start/stop を行いません。capture graph の変更は `CameraCaptureSession` の serial queue に閉じ込めます。
+
+## 27. Delivery-time generation gate なしで低レベル Vision result を publish する
+
+通常の live analysis では `CameraVisionWorker` を使います。`CameraVisionPipeline` を直接使う場合は、実際に UI delivery が走る時点でも同等の generation validation を行います。Vision 完了時点だけの確認では、MainActor に enqueue 済みの古い結果が後から届く race が残ります。
