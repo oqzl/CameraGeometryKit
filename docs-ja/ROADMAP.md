@@ -9,12 +9,13 @@ CameraGeometryKit は、実際の camera app で shared semantics が繰り返�
 - source / crop mapping
 - aspect-fit / aspect-fill mapping
 - UIImage canonicalization
+- 薄い `CameraCaptureSession`
 - bounded newest-frame stream
 - frame ID と geometry snapshot
 - RotationCoordinator wrapper
 - preview / analysis mirror policy 分離
-- Vision coordinate conversion
-- `WorkGeneration` stale-result guard
+- Swift-native Vision `NormalizedPoint` / `NormalizedRect` conversion
+- actor ベース `CameraVisionWorker` と latest-frame / stale-delivery guarantee
 - diagnostics
 - 英日ドキュメント
 - 機種別 validation structure
@@ -31,7 +32,7 @@ CameraGeometryKit は、実際の camera app で shared semantics が繰り返�
 
 - photo-output geometry helper
 - `AVCaptureVideoPreviewLayer` への canonical overlay mapping
-- RGB + depth + mask 用 synchronization token
+- RGB + depth + mask + Vision 用 synchronization token
 - depth-frame geometry
 - MultiCam per-camera rotation snapshot
 - metadata-output geometry adapter
@@ -46,4 +47,5 @@ CameraGeometryKit は、実際の camera app で shared semantics が繰り返�
 - generic processing graph
 - universal camera product state machine
 - backward-compatibility layer
+- pre-iOS-18 Vision request-handler compatibility
 - model-specific rotation patch
