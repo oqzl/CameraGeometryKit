@@ -345,13 +345,15 @@ public final class CameraCaptureSession: @unchecked Sendable {
             captureAngle: coordinator.videoRotationAngleForHorizonLevelCapture
         )
 
+        let deviceUniqueID = device.uniqueID
         captureRotationObservation = coordinator.observe(
             \.videoRotationAngleForHorizonLevelCapture,
             options: [.new]
         ) { [weak self] coordinator, _ in
             let angle = coordinator.videoRotationAngleForHorizonLevelCapture
             self?.sessionQueue.async { [weak self] in
-                self?.applyCaptureConnectionsLocked(captureAngle: angle)
+                guard let self, self.activeDevice?.uniqueID == deviceUniqueID else { return }
+                self.applyCaptureConnectionsLocked(captureAngle: angle)
             }
         }
     }
