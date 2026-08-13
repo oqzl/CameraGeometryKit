@@ -6,7 +6,7 @@ Camera rotation は UI orientation ではなく camera geometry です。
 
 `AVCaptureDevice.RotationCoordinator` を唯一の authoritative resolver とします。Preview と Capture は別の問題なので、別の角度を使います。
 
-この文書には CamLab で蓄積した実機上の知見を吸収し、CameraGeometryKit 単体で方針が完結するよう再整理しています。
+この文書には CamLab で蓄積した実機上の知見を吸収し、CameraGeometryKit 単体で方針が完結するよう再整理しています。主要な設計根拠は CamLab の [`docs/iOS_Camera_Rotate.md`](https://github.com/oqzl/CamLab/blob/main/docs/iOS_Camera_Rotate.md) です。CamLab 側を歴史的・アプリ実装由来の evidence、本書をそこから一般化した CameraGeometryKit の再利用規約として扱います。
 
 ## 分離すべき値
 
@@ -119,6 +119,11 @@ old coordinator は再利用しません。
 camera chrome を portrait-native に固定する製品設計はあり得ます。その場合でも supported interface orientation policy / scene geometry は UI の責務で、camera preview/capture rotation と独立です。
 
 `requestGeometryUpdate` だけを lock とみなしたり、UI orientation を camera angle へ変換したりしません。CameraGeometryKit は product UI orientation policy 自体は所有しません。
+
+## プロジェクト由来資料
+
+- [CamLab: `docs/iOS_Camera_Rotate.md`](https://github.com/oqzl/CamLab/blob/main/docs/iOS_Camera_Rotate.md) — 本パッケージが一般化した、アプリレベルの詳細な回転・向き補正設計。
+- [CamLab: `docs/CAMERA_FRAME_ORIENTATION.md`](https://github.com/oqzl/CamLab/blob/main/docs/CAMERA_FRAME_ORIENTATION.md) — `AVCaptureVideoDataOutput` の適用済み回転と downstream double rotation を防ぐ実戦上の規約。
 
 ## Apple 公式資料
 
