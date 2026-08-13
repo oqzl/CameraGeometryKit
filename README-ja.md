@@ -2,9 +2,7 @@
 
 CameraGeometryKit は、写真、画面タッチ、Vision、ライブ動画フレーム、前面／背面カメラ、左右反転、端末回転、クロップ、プレビューについて「画像中の同じ場所」を一貫して扱うための iOS 18+ / Swift 6 専用基盤です。
 
-AVFoundation、Vision、UIKit/SwiftUI、Core Image、写真、動画フレームは、それぞれ正しいものの異なる座標系・向きの規約を持っています。小さなPoCなら場当たり的な変換でも動きますが、カメラアプリが育つと破綻します。
-
-CameraGeometryKit は、アプリ内部に一つの canonical image space を定義し、外部APIとの境界でだけ変換します。
+AVFoundation、Vision、UIKit/SwiftUI、Core Image、写真、動画フレームは、それぞれ正しいものの異なる座標系・向きの規約を持っています。CameraGeometryKit はアプリ内部に一つの canonical image space を定義し、外部APIとの境界でだけ変換します。
 
 ```text
 Photo / Camera Frame / Vision / Touch / Crop / Preview
@@ -32,32 +30,32 @@ y           上 → 下
 ## このパッケージが担当するもの
 
 - 型付き canonical point / rect
-- クロップと出力画像座標の変換
-- aspect fit / aspect fill のプレビュー座標変換
-- 写真の canonical 化（`UIImage` を orientation `.up`、scale 1へ）
-- 最新1フレーム方式の `AVCaptureVideoDataOutput` ストリーム
-- フレームID、timestamp、回転、mirror、解像度のスナップショット
-- `AVCaptureDevice.RotationCoordinator` の扱い
+- crop / output image 座標変換
+- aspect fit / aspect fill の preview mapping
+- `UIImage` の canonical 化（orientation `.up` / scale 1）
+- 薄い `CameraCaptureSession` 基盤
+- 最新1フレーム方式の `AVCaptureVideoDataOutput` stream
+- frame ID / timestamp / rotation / mirror / dimensions
+- `AVCaptureDevice.RotationCoordinator` の共通処理
 - Preview と Analysis の mirror policy 分離
 - Vision normalized 座標変換
-- bounded frame delivery と stale-result 抑止用 generation token
+- bounded な generic Vision work と generation-safe delivery
 - diagnostics
 - 機種別の実機検証記録
 
 ## 担当しないもの
 
 - エフェクト、フィルタ
-- アプリ固有のカメラUI
+- アプリ固有の camera chrome
 - 万能 `CameraManager`
-- Best Shot、Trackingなど製品固有ワークフロー
+- 具体的な Vision model / 製品上の意味付け
+- Best Shot、Tracking 等の製品ワークフロー
 - 保存・共有ポリシー
 - 汎用ランタイムパイプライングラフ
 
-CameraGeometryKit は基盤です。製品機能の composition root は各アプリに残します。
+製品機能の composition root は各アプリに残します。
 
 ## 導入
-
-Swift Package として追加し、次を import します。
 
 ```swift
 import CameraGeometryKit
@@ -67,15 +65,13 @@ Package 自体が iOS 18+ / Swift 6 固定です。
 
 ## Canonical 座標
 
-Screen、Vision、crop-relative、image の点を、すべて同じ無印 `CGPoint` で持たないことが基本です。
+Screen、Vision、crop-relative、image の点を同じ無印 `CGPoint` で持ちません。
 
 ```swift
 let subject = CanonicalPoint(x: 0.42, y: 0.61)
 ```
 
-Canonical 値は暗黙には clamp しません。現在の crop 外にある点も、source image 上の位置としては正しいからです。
-
-クロップ済み出力への変換:
+Canonical 値は暗黙には clamp しません。現在の crop 外にある点も source image 上の位置としては正しいからです。
 
 ```swift
 let space = ImageCoordinateSpace(
@@ -85,66 +81,51 @@ let space = ImageCoordinateSpace(
 let outputPoint = space.outputNormalizedPoint(for: subject)
 ```
 
-表示プレビューへの変換:
-
-```swift
-let mapping = ViewportMapping(
-    imageSize: image.size,
-    viewportSize: viewSize,
-    contentMode: .aspectFit,
-    isMirrored: false
-)
-let canonical = mapping.canonicalPoint(fromViewport: touchLocation)
-```
-
-aspect fit の余白タップは `nil`。aspect fill の見切れは勝手に clamp せず、そのまま座標差として保持します。
+表示 preview には `ViewportMapping` を使います。aspect fit の余白タップは `nil`、aspect fill の見切れは暗黙 clamp しません。
 
 ## 写真
 
-写真読込の境界で orientation と scale を正規化します。
+画像読込の境界で orientation と scale を正規化します。
 
 ```swift
 let canonicalImage = image.cameraGeometryCanonicalized()
+let preview = canonicalImage.cameraGeometryDownsampled(maxPixelDimension: 1600)
 ```
 
-これで orientation `.up` / scale `1` となり、画像処理は「1 unit = 1 pixel」で考えられます。プレビュー用の縮小は normalized 座標を変えません。
+canonical image は orientation `.up` / scale `1` です。
 
-## Capture Session との統合
+## Capture Session
 
-CameraGeometryKit は `AVCaptureSession` 全体を所有しません。permission UX、device selection、session lifecycle、photo/movie output、camera chrome はアプリ側の責務です。パッケージは、それらの経路をまたいで意味を一致させる必要がある部品だけを提供します。
-
-Live analysis では `CameraFrameStream.output` をアプリの session に追加し、active camera が変わるたびに stream の camera position を更新します。
+`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring を担当します。
 
 ```swift
-let frameStream = CameraFrameStream()
-
-session.beginConfiguration()
-session.addOutput(frameStream.output)
-frameStream.setCameraPosition(device.position)
-session.commitConfiguration()
+let camera = CameraCaptureSession()
+try await camera.start(position: .back)
 ```
 
-カメラ切替時は新しい `AVCaptureDevice` 用に `CameraRotation` を作り直し、connection policy を再適用し、旧 processing generation を invalidate します。
+公開している `captureSession` は preview layer 接続用であり、外側から capture graph を独自変更するためのものではありません。
+
+```swift
+let previewLayer = AVCaptureVideoPreviewLayer(session: camera.captureSession)
+let previewRotation = camera.makePreviewRotation(previewLayer: previewLayer)
+```
+
+camera switch 完了後は preview rotation を作り直します。写真撮影直前には photo connection を再同期します。
+
+```swift
+try await camera.preparePhotoCapture()
+camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
+```
+
+Photo settings/delegate、preview UI、recording、effects、製品ワークフローはアプリ側の責務です。
+
+詳細は [Capture Session](docs-ja/CAPTURE_SESSION.md)。
 
 ## カメラフレーム
 
-`CameraFrameStream` は `AVCaptureVideoDataOutput` と `AsyncStream<CameraFrame>` を提供します。バッファは最新1件だけです。
+`CameraFrameStream` は `AVCaptureVideoDataOutput` と `AsyncStream<CameraFrame>` を提供し、pending は最新1件だけ保持します。標準 Session wrapper が capture angle と canonical non-mirroring を設定します。
 
-```swift
-@MainActor
-func configureAnalysisConnection(
-    frameStream: CameraFrameStream,
-    rotation: CameraRotation
-) {
-    guard let connection = frameStream.output.connection(with: .video) else { return }
-    rotation.applyCaptureAngle(to: connection)
-    CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: connection)
-}
-```
-
-`AVCaptureVideoDataOutput` は `videoRotationAngle` が設定されると配信する pixel buffer 自体を物理回転します。したがって `CameraFrame.geometry.appliedVideoRotationAngle` は診断情報です。後段でもう一度回してはいけません。
-
-フレームは溜めません。
+`AVCaptureVideoDataOutput` は `videoRotationAngle` を frame 自体へ適用するため、`CameraFrame.geometry.appliedVideoRotationAngle` は診断情報です。後段でもう一度回してはいけません。
 
 ```text
 capture 60 fps
@@ -157,41 +138,17 @@ capture 60 fps
 
 ## 回転
 
-active `AVCaptureDevice` ごとに `CameraRotation` を作ります。
-
-```swift
-@MainActor
-let rotation = CameraRotation(device: device, previewLayer: previewLayer)
-```
-
-Preview には preview angle、撮影物／canonical analysis frame には capture angle を使います。
-
-```swift
-rotation.applyPreviewAngle(to: previewConnection)
-rotation.applyCaptureAngle(to: analysisConnection)
-```
-
-interface orientation、`UIDeviceOrientation`、前面／背面、pixel buffer の縦横、iPhone機種表から角度を逆算してはいけません。
+Preview angle と Capture angle は別責務です。`CameraRotation` / `AVCaptureDevice.RotationCoordinator` を使い、interface orientation、`UIDeviceOrientation`、Front/Back、pixel dimensions、iPhone機種表から camera angle を逆算しません。
 
 詳細は [Camera Rotation](docs-ja/CAMERA_ROTATION.md)。
 
 ## Mirroring
 
-Preview の鏡像表示と、保存・解析画像の identity は別物です。
-
-```swift
-CameraConnectionConfiguration.configurePreviewMirroring(
-    on: previewConnection,
-    cameraPosition: device.position
-)
-CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: analysisConnection)
-```
-
-標準方針は「Front Preview は mirror、Analysis / 保存物は non-mirror」です。
+Preview の鏡像表示と、保存・解析画像の identity は別物です。標準方針は「Front Preview は mirror、Analysis / 保存物は non-mirror」です。
 
 ## Vision
 
-Vision は主要な座標境界なので基盤に含めます。Vision normalized 座標は左下原点です。境界で即座に canonical へ変換します。
+Vision normalized 座標は左下原点なので、境界で canonical へ変換します。
 
 ```swift
 let canonicalBox = VisionGeometry.canonicalRect(
@@ -199,57 +156,40 @@ let canonicalBox = VisionGeometry.canonicalRect(
 )
 ```
 
-Live Vision は `CameraFrameStream.frames` を逐次 consume します。stream 自体が最新1件だけを buffer するため、解析が遅くても FIFO backlog は成長しません。
-
-旧設定の結果を publish しないために `WorkGeneration` を使います。
+Live Vision の標準入口は `CameraVisionWorker<Value>` です。低レベル Vision pipeline に generation tracking、1 in-flight、最新1件 pending、frame identity、MainActor delivery の最終 gate を重ねます。
 
 ```swift
-let generation = WorkGeneration()
-let workGeneration = generation.current
+let faces = CameraVisionWorker<[CanonicalRect]>(
+    makeRequest: { VNDetectFaceRectanglesRequest() },
+    extract: { request in
+        let observations = request.results as? [VNFaceObservation] ?? []
+        return observations.map {
+            VisionGeometry.canonicalRect(fromVisionNormalized: $0.boundingBox)
+        }
+    },
+    delivery: { output in
+        faceBoxes = output.value
+    }
+)
 
-// Vision は MainActor 外で実行する。
-// publish 直前に:
-guard generation.isCurrent(workGeneration) else { return }
+faces.submit(frame)
 ```
 
-カメラ切替、analyzer 設定変更、画面離脱時:
+camera identity、analyzer settings、画面の消費主体が変わったら:
 
 ```swift
-generation.invalidate()
-request.cancel() // VNRequest 実行中なら cancel
+faces.invalidate()
 ```
 
-Cancellation は resource control、generation comparison が correctness guarantee です。詳細は [Vision Pipeline](docs-ja/VISION_PIPELINE.md)。
+具体的な Vision request と semantic result mapping はアプリ側に残します。詳細は [Vision Pipeline](docs-ja/VISION_PIPELINE.md)。
 
 ## Touch と `AVCaptureVideoPreviewLayer`
 
-Live Preview Layer の focus/exposure 座標は canonical image space ではありません。別の型として保持し、`videoGravity` 等の変換は AVFoundation に任せます。
-
-```swift
-let point: CaptureDevicePoint = previewLayer.captureDevicePoint(
-    fromLayerPoint: touchLocation
-)
-device.focusPointOfInterest = point.cgPoint
-```
-
-これを `CanonicalPoint` として保存してはいけません。canonical frame/image を custom preview している場合のアプリ意味座標には `ViewportMapping` を使います。
+Preview layer の focus/exposure point は canonical image space ではありません。`CaptureDevicePoint` として区別し、AVFoundation の変換APIを使います。custom preview 上のアプリ意味座標には `ViewportMapping` を使います。
 
 ## Diagnostics
 
-座標系バグは推測せず、値を出します。最低限次を実機検証時に記録します。
-
-```text
-camera position
-preview rotation angle
-capture rotation angle
-analysis connection angle
-preview mirrored
-analysis mirrored
-frame dimensions
-frames delivered
-frames dropped by AVFoundation
-pending frames replaced by latest-frame buffering
-```
+実機検証では camera position、preview/capture/analysis rotation angle、mirror flags、frame dimensions、delivered frames、AVFoundation drops、latest-buffer replacement を記録します。
 
 詳細は [Validation](docs-ja/VALIDATION.md)。
 
@@ -266,11 +206,13 @@ pending frames replaced by latest-frame buffering
 - MainActor / capture callback で重い処理をしない
 - generation 変更後の旧結果を publish しない
 - width / height から orientation を推測しない
+- `CameraCaptureSession` の capture graph を外側から変更しない
 
 ## ドキュメント
 
 - [Architecture](docs-ja/ARCHITECTURE.md)
 - [Coordinate Spaces](docs-ja/COORDINATE_SPACES.md)
+- [Capture Session](docs-ja/CAPTURE_SESSION.md)
 - [Camera Rotation](docs-ja/CAMERA_ROTATION.md)
 - [Vision Pipeline](docs-ja/VISION_PIPELINE.md)
 - [Prohibited Patterns](docs-ja/PROHIBITIONS.md)
