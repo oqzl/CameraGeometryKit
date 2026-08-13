@@ -6,7 +6,7 @@ Camera rotation is camera geometry, not UI orientation.
 
 Use `AVCaptureDevice.RotationCoordinator` as the authoritative resolver. It provides separate values for preview and capture because those are different problems.
 
-This policy incorporates field lessons accumulated in CamLab and is restated here so CameraGeometryKit is self-contained.
+This policy incorporates field lessons accumulated in CamLab and is restated here so CameraGeometryKit is self-contained. The primary project source is CamLab's [`docs/iOS_Camera_Rotate.md`](https://github.com/oqzl/CamLab/blob/main/docs/iOS_Camera_Rotate.md). CameraGeometryKit treats that document as historical/implementation evidence and this document as the reusable library policy derived from it.
 
 ## Separate these values
 
@@ -123,6 +123,11 @@ Do not reuse the old coordinator.
 Some camera apps intentionally keep camera chrome portrait-native while the device is physically landscape. Supported interface orientation policy and scene geometry are UI responsibilities and remain independent from camera preview/capture rotation.
 
 `requestGeometryUpdate` is not a substitute for correct supported-orientation policy, and neither should be converted into camera angles. CameraGeometryKit does not own product UI orientation policy.
+
+## Project source material
+
+- [CamLab: `docs/iOS_Camera_Rotate.md`](https://github.com/oqzl/CamLab/blob/main/docs/iOS_Camera_Rotate.md) — the detailed application-level rotation/orientation design that this package generalizes.
+- [CamLab: `docs/CAMERA_FRAME_ORIENTATION.md`](https://github.com/oqzl/CamLab/blob/main/docs/CAMERA_FRAME_ORIENTATION.md) — field rules for already-rotated `AVCaptureVideoDataOutput` frames and avoiding downstream double rotation.
 
 ## Official Apple references
 
