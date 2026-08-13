@@ -1,0 +1,129 @@
+@preconcurrency import AVFoundation
+import CoreMedia
+import CoreVideo
+import Foundation
+
+public struct CameraFrameStreamStatistics: Sendable, Hashable {
+    public let deliveredFrames: UInt64
+    public let droppedByAVFoundation: UInt64
+    public let replacedInLatestBuffer: UInt64
+
+    public init(
+        deliveredFrames: UInt64,
+        droppedByAVFoundation: UInt64,
+        replacedInLatestBuffer: UInt64
+    ) {
+        self.deliveredFrames = deliveredFrames
+        self.droppedByAVFoundation = droppedByAVFoundation
+        self.replacedInLatestBuffer = replacedInLatestBuffer
+    }
+}
+
+/// `AVCaptureVideoDataOutput` wrapper with bounded, latest-frame semantics.
+///
+/// The AsyncStream buffer has capacity one. Consumers never accumulate an
+/// unbounded queue while Vision or image processing is slower than capture.
+public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+    public let output: AVCaptureVideoDataOutput
+    public let frames: AsyncStream<CameraFrame>
+
+    private let deliveryQueue: DispatchQueue
+    private let lock = NSLock()
+    private let continuation: AsyncStream<CameraFrame>.Continuation
+
+    private var cameraPosition: CameraPosition = .unspecified
+    private var sequence: UInt64 = 0
+    private var deliveredFrames: UInt64 = 0
+    private var droppedByAVFoundation: UInt64 = 0
+    private var replacedInLatestBuffer: UInt64 = 0
+
+    public init(
+        pixelFormat: OSType = kCVPixelFormatType_32BGRA,
+        queueLabel: String = "net.oqzl.CameraGeometryKit.frames"
+    ) {
+        output = AVCaptureVideoDataOutput()
+        deliveryQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
+
+        let pair = AsyncStream<CameraFrame>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        frames = pair.stream
+        continuation = pair.continuation
+
+        super.init()
+
+        output.alwaysDiscardsLateVideoFrames = true
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
+        ]
+        output.setSampleBufferDelegate(self, queue: deliveryQueue)
+    }
+
+    deinit {
+        continuation.finish()
+    }
+
+    /// Update this whenever the active capture device changes.
+    public func setCameraPosition(_ position: AVCaptureDevice.Position) {
+        lock.withLock {
+            cameraPosition = CameraPosition(position)
+        }
+    }
+
+    public func statistics() -> CameraFrameStreamStatistics {
+        lock.withLock {
+            CameraFrameStreamStatistics(
+                deliveredFrames: deliveredFrames,
+                droppedByAVFoundation: droppedByAVFoundation,
+                replacedInLatestBuffer: replacedInLatestBuffer
+            )
+        }
+    }
+
+    public func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let frame: CameraFrame = lock.withLock {
+            sequence &+= 1
+            deliveredFrames &+= 1
+
+            return CameraFrame(
+                id: CameraFrameID(rawValue: sequence),
+                pixelBuffer: pixelBuffer,
+                timestamp: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                geometry: CameraFrameGeometry(
+                    pixelWidth: CVPixelBufferGetWidth(pixelBuffer),
+                    pixelHeight: CVPixelBufferGetHeight(pixelBuffer),
+                    cameraPosition: cameraPosition,
+                    appliedVideoRotationAngle: connection.videoRotationAngle,
+                    isMirrored: connection.isVideoMirrored
+                )
+            )
+        }
+
+        switch continuation.yield(frame) {
+        case .dropped(_):
+            lock.withLock {
+                replacedInLatestBuffer &+= 1
+            }
+        case .enqueued(_), .terminated:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    public func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        lock.withLock {
+            droppedByAVFoundation &+= 1
+        }
+    }
+}
