@@ -10,12 +10,13 @@ CameraGeometryKit should grow only where real camera applications need shared se
 - aspect-fit / aspect-fill viewport mapping
 - mirrored presentation mapping
 - UIImage orientation/scale canonicalization
+- thin serialized `CameraCaptureSession`
 - bounded newest-frame VideoDataOutput stream
 - frame ID and geometry snapshot
 - RotationCoordinator wrapper
 - explicit preview/analysis mirror policies
-- Vision coordinate conversion
-- `WorkGeneration` stale-result guard
+- Swift-native Vision `NormalizedPoint` / `NormalizedRect` conversion
+- actor-based `CameraVisionWorker` with latest-frame and stale-delivery guarantees
 - diagnostics value model
 - English/Japanese documentation
 - per-device validation structure
@@ -49,4 +50,5 @@ Populate `docs/validation/iPhone17/` first, then add hardware folders as devices
 - generic processing graph
 - universal camera product state machine
 - backward-compatibility layers
+- original Vision request-handler compatibility
 - model-specific rotation patches
