@@ -1,117 +1,23 @@
 # Prohibited Patterns
 
-以下は、実際には座標・回転・スケジューリングの誤りなのに「この機種だけ変」と見えやすい典型パターンです。この文書は package contract の一部として扱います。
+以下は package invariant として扱います。
 
-## 1. 機種別 rotation hack
-
-```swift
-if model == "iPhone17,1" {
-    angle += 90
-}
-```
-
-禁止です。まず device validation に failure を記録し、`RotationCoordinator` と connection state を確認し、一般ロジックの誤りを直します。
-
-## 2. Front / Back 固定角度表
-
-`device.position == .front ? 270 : 90` のような表は禁止。camera module の native orientation は単純な front/back rule ではありません。
-
-## 3. UI orientation を camera angle にする
-
-`windowScene.interfaceOrientation` から capture angle を決めません。UI orientation と camera physical orientation は別 domain です。
-
-## 4. `UIDeviceOrientation` を camera resolver にする
-
-端末姿勢から camera rotation を決めません。`RotationCoordinator` を使います。
-
-## 5. Preview angle を Capture に流用
-
-別値です。代用しません。
-
-## 6. Capture angle で camera chrome を回す
-
-camera chrome は product UI。capture angle の変化で reflow / rotation しません。
-
-## 7. width / height から orientation 推測
-
-禁止。sensor-native orientation と connection rotation は camera ごとに異なります。
-
-## 8. 二重回転
-
-VideoDataOutput connection が frame を物理回転済みなら、Core Image、Viewer、Export で同じ補正を再適用しません。
-
-## 9. Writer が orientation を独自解決
-
-`AVAssetWriter` が `UIDevice`、`UIWindowScene`、front/back、機種名を見て向きを推測しません。resolved capture orientation を受け取るだけです。
-
-## 10. Writer の全 frame を無意味に物理回転
-
-`AVCaptureVideoDataOutput + AVAssetWriter` では metadata transform で済むなら `AVAssetWriterInput.transform` を使います。
-
-## 11. Mirroring を rotation に埋め込む
-
-mirror は別 policy。front preview が鏡像だからといって回転角を足して直しません。
-
-## 12. Front camera は常に mirror 保存
-
-mirror preview と media identity は別です。
-
-## 13. Untyped point soup
-
-Vision point、screen point、crop-relative、image normalized を全部同じ `CGPoint` として流しません。意味型と explicit mapping を使います。
-
-## 14. Raw Vision 座標を UI state に保存
-
-Vision origin は canonical と異なります。Vision 境界で変換します。
-
-## 15. Focus point を canonical として保存
-
-`captureDevicePointConverted` の結果は unrotated capture-device point-of-interest space。`CaptureDevicePoint` のまま扱います。
-
-## 16. 暗黙 clamp
-
-crop 外 point を crop edge に clamp すると意味が変わります。明示的な境界まで out-of-range 値を保持します。
-
-## 17. 無制限 frame queue
-
-camera frame を全部 Vision / image processing queue に積みません。obsolete work は捨てます。
-
-## 18. Capture callback で重い処理
-
-delegate callback では hand-off だけ。Vision、Core Image render、contour、mask scan、file I/O は実行しません。
-
-## 19. MainActor で重い処理
-
-MainActor は UI state の所有者であり image processor ではありません。
-
-## 20. Cancellation だけで stale result を防ぐ
-
-cancel 後でも race して完了することがあります。publish 直前に generation/config identity を確認します。
-
-## 21. Camera switch 後に old result を表示
-
-camera switch は device、RotationCoordinator、mirror policy、processing generation を変えます。old camera の結果を new camera UI へ反映しません。
-
-## 22. Old RotationCoordinator 再利用
-
-coordinator は `AVCaptureDevice` に紐づきます。active camera 変更時に作り直します。
-
-## 23. 別 frame 由来の派生データを混ぜる
-
-alignment が重要なら RGB、mask、depth、Vision result の `CameraFrameID` を揃えます。
-
-## 24. 必須同期データ欠損時の silent fallback
-
-Depth 等が必須なら、欠損時に無関係な current RGB へ黙って fallback しません。最後の valid synchronized state を保つか明示的 unavailable にします。
-
-## 25. Simulatorだけで検証完了
-
-front camera、TrueDepth、rotation、mirror、機種固有 camera 挙動は実機で確認し、`docs-ja/validation/<device>/` に記録します。
-
-## 26. Product code から `CameraCaptureSession.captureSession` を変更する
-
-公開 session は `AVCaptureVideoPreviewLayer` の接続と参照用です。外側から input/output の追加削除、camera switch、start/stop を行いません。capture graph の変更は `CameraCaptureSession` の serial queue に閉じ込めます。
-
-## 27. Delivery-time generation gate なしで低レベル Vision result を publish する
-
-通常の live analysis では `CameraVisionWorker` を使います。`CameraVisionPipeline` を直接使う場合は、実際に UI delivery が走る時点でも同等の generation validation を行います。Vision 完了時点だけの確認では、MainActor に enqueue 済みの古い結果が後から届く race が残ります。
+1. **機種別 rotation hack を入れない。** 機種差は validation record に残し、一般ロジックを直す。
+2. **Front / Back 固定角度表を作らない。** camera position は stable な native rotation を意味しない。
+3. **UI orientation を camera resolver にしない。** `UIDeviceOrientation` や interface orientation から capture rotation を逆算しない。
+4. **deprecated orientation API を使わない。** `AVCaptureVideoOrientation`、`AVCaptureConnection.videoOrientation`、`isVideoOrientationSupported` は使わず、`AVCaptureDevice.RotationCoordinator`、`videoRotationAngle`、`isVideoRotationAngleSupported(_:)` を使う。
+5. **Preview angle と Capture angle を混ぜない。** 別の責務・別の値として扱う。
+6. **二重回転しない。** `AVCaptureVideoDataOutput` connection がすでに回転した frame を後段でもう一度回さない。
+7. **rotation と mirroring を混ぜない。** Front preview の鏡像表示は analysis / 保存物の identity を変えない。
+8. **untyped coordinate soup を作らない。** Screen、Vision、crop、capture-device、canonical は明示的な型・変換境界を通す。
+9. **暗黙 clamp をしない。** crop 外 point は clipping が明示的に必要になるまで crop 外のまま保持する。
+10. **無制限 frame queue を作らない。** live processing は obsolete work を溜めない。
+11. **capture callback / MainActor で重い処理をしない。** callback は hand-off、MainActor は UI state を担当する。
+12. **Cancellation だけで stale result 対策完了としない。** generation identity で旧結果の publish を防ぐ。
+13. **alignment が必要な派生データで frame ID を混ぜない。** RGB / mask / depth / Vision result は source `CameraFrameID` を保持する。
+14. **camera switch 後に old RotationCoordinator を使わない。** coordinator は1つの `AVCaptureDevice` に所属する。
+15. **product code から `CameraCaptureSession.captureSession` を変更しない。** capture graph mutation は wrapper 内で直列化する。
+16. **pre-iOS-18 Vision compatibility layer を作らない。** Swift-native request / observation と `async` / `await` を使い、旧 request-handler 実行を戻さない。
+17. **Swift-native Vision geometry を崩さない。** `NormalizedPoint` / `NormalizedRect` は `VisionGeometry` で canonical に変換するまで Vision の型として扱う。
+18. **live Vision の freshness guarantee を迂回しない。** `CameraVisionWorker` または同等実装で bounded work、latest pending frame、frame identity、invalidation cancellation、stale-delivery suppression を守る。
+19. **Simulator だけで検証完了にしない。** rotation、front mirror、TrueDepth/depth、機種差は実機で検証し `docs-ja/validation/<device>/` に残す。
