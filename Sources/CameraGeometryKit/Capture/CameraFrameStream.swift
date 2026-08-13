@@ -37,8 +37,14 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
     private var droppedByAVFoundation: UInt64 = 0
     private var replacedInLatestBuffer: UInt64 = 0
 
+    /// Creates a latest-frame stream.
+    ///
+    /// Pass `nil` to receive the device-native pixel format. This is the default
+    /// because forcing BGRA adds conversion and memory-bandwidth cost on typical
+    /// camera pipelines. Pass a concrete format only when the downstream
+    /// consumer actually requires it.
     public init(
-        pixelFormat: OSType = kCVPixelFormatType_32BGRA,
+        pixelFormat: OSType? = nil,
         queueLabel: String = "net.oqzl.CameraGeometryKit.frames"
     ) {
         output = AVCaptureVideoDataOutput()
@@ -53,9 +59,13 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
         super.init()
 
         output.alwaysDiscardsLateVideoFrames = true
-        output.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
-        ]
+        if let pixelFormat {
+            output.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
+            ]
+        } else {
+            output.videoSettings = [:]
+        }
         output.setSampleBufferDelegate(self, queue: deliveryQueue)
     }
 
