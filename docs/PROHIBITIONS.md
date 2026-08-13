@@ -113,3 +113,11 @@ If a feature requires depth/mask/other synchronized data, do not silently substi
 ## 25. Simulator-only completion claims
 
 Do not mark front-camera, TrueDepth, device rotation, mirroring, or model-specific behavior verified based only on Simulator. Record real-device evidence under `docs/validation/<device>/`.
+
+## 26. Mutating `CameraCaptureSession.captureSession` from product code
+
+The session is exposed so apps can attach an `AVCaptureVideoPreviewLayer` and inspect it. Do not independently add/remove inputs or outputs, switch devices, or call start/stop on it. Capture-graph mutations must remain serialized by `CameraCaptureSession`.
+
+## 27. Publishing low-level Vision results without a delivery-time generation gate
+
+For ordinary live analysis, use `CameraVisionWorker`. If product code uses `CameraVisionPipeline` directly, it must provide equivalent generation validation at the actual UI-delivery boundary. Checking only when Vision finishes leaves a race with already-enqueued MainActor delivery.
