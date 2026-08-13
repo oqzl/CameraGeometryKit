@@ -2,9 +2,7 @@
 
 CameraGeometryKit is an iOS 18+ / Swift 6 foundation for camera apps that need photos, touch input, Vision, live video frames, front/back cameras, mirroring, rotation, cropping, and previews to agree on what “the same point in the image” means.
 
-The package exists because AVFoundation, Vision, UIKit/SwiftUI, Core Image, photos, and video frames each have valid but different coordinate and orientation conventions. A small camera app can get away with converting ad hoc. A real camera app eventually cannot.
-
-CameraGeometryKit establishes one canonical image space and makes every boundary explicit.
+AVFoundation, Vision, UIKit/SwiftUI, Core Image, photos, and video frames each have valid but different coordinate and orientation conventions. CameraGeometryKit establishes one canonical image space and makes every boundary explicit.
 
 ```text
 Photo / Camera Frame / Vision / Touch / Crop / Preview
@@ -35,12 +33,13 @@ mirroring   none
 - crop and output-image coordinate mapping
 - aspect-fit / aspect-fill preview mapping
 - photo canonicalization (`UIImage` orientation `.up`, scale 1)
+- a thin serialized `CameraCaptureSession` foundation
 - bounded latest-frame `AVCaptureVideoDataOutput` streaming
 - per-frame identity, timestamp, rotation, mirroring, and dimensions
 - `AVCaptureDevice.RotationCoordinator` wrappers
 - explicit preview and analysis mirroring policies
 - Vision normalized-coordinate conversion
-- bounded frame delivery plus generation tokens for stale-result suppression
+- bounded generic Vision work with generation-safe delivery
 - diagnostics primitives
 - device-by-device validation records
 
@@ -49,6 +48,7 @@ mirroring   none
 - effects and filters
 - app-specific camera chrome
 - a universal `CameraManager`
+- concrete Vision model/product semantics
 - best-shot selection, tracking behavior, or product workflows
 - storage and sharing policy
 - a generic runtime pipeline graph
@@ -73,9 +73,7 @@ Do not put screen points, Vision points, crop-relative points, and image points 
 let subject = CanonicalPoint(x: 0.42, y: 0.61)
 ```
 
-Canonical values are intentionally not clamped. A point can lie outside the current crop while still being a perfectly valid position in the source image.
-
-For a cropped output:
+Canonical values are intentionally not clamped. A point can lie outside the current crop while still being a valid position in the source image.
 
 ```swift
 let space = ImageCoordinateSpace(
@@ -105,52 +103,43 @@ Normalize imported images at the boundary before deriving geometry:
 
 ```swift
 let canonicalImage = image.cameraGeometryCanonicalized()
-```
-
-This makes the image orientation `.up` and the scale `1`, so image-processing geometry can use one unit per pixel. Downsampling for interactive preview preserves normalized coordinates:
-
-```swift
 let preview = canonicalImage.cameraGeometryDownsampled(maxPixelDimension: 1600)
 ```
 
-## Capture-session integration
+The canonical image is orientation `.up`, scale `1`, so image-processing geometry can use one unit per pixel.
 
-CameraGeometryKit deliberately does not own the entire `AVCaptureSession`. The app remains responsible for permission UX, device selection, session lifecycle, photo/movie outputs, and camera chrome. The package supplies the pieces whose semantics must stay consistent across those paths.
+## Capture session
 
-For live analysis, add `CameraFrameStream.output` to the app's session and update the stream whenever the active camera changes:
+`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, and canonical non-mirroring.
 
 ```swift
-let frameStream = CameraFrameStream()
-
-session.beginConfiguration()
-session.addOutput(frameStream.output)
-frameStream.setCameraPosition(device.position)
-session.commitConfiguration()
+let camera = CameraCaptureSession()
+try await camera.start(position: .back)
 ```
 
-When switching cameras, create a new `CameraRotation` for the new `AVCaptureDevice`, reapply connection policies, and invalidate the old processing generation.
+Its `captureSession` is exposed so an app can attach a preview layer, not so the app can mutate the capture graph independently:
+
+```swift
+let previewLayer = AVCaptureVideoPreviewLayer(session: camera.captureSession)
+let previewRotation = camera.makePreviewRotation(previewLayer: previewLayer)
+```
+
+Recreate preview rotation after a successful camera switch. Before issuing a photo request, resynchronize the photo connection:
+
+```swift
+try await camera.preparePhotoCapture()
+camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
+```
+
+Photo settings/delegate policy, preview UI, recording, effects, and product workflow remain app responsibilities.
+
+See [Capture Session](docs/CAPTURE_SESSION.md).
 
 ## Camera frames
 
-`CameraFrameStream` provides an `AVCaptureVideoDataOutput` and an `AsyncStream<CameraFrame>` with a newest-one buffer.
+`CameraFrameStream` provides an `AVCaptureVideoDataOutput` and an `AsyncStream<CameraFrame>` with a newest-one buffer. The standard session wrapper configures its capture angle and canonical non-mirroring.
 
-After adding the output, configure its connection with the camera-specific capture angle and non-mirrored analysis policy:
-
-```swift
-@MainActor
-func configureAnalysisConnection(
-    frameStream: CameraFrameStream,
-    rotation: CameraRotation
-) {
-    guard let connection = frameStream.output.connection(with: .video) else { return }
-    rotation.applyCaptureAngle(to: connection)
-    CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: connection)
-}
-```
-
-Apple physically rotates frames delivered by `AVCaptureVideoDataOutput` when `videoRotationAngle` is set. `CameraFrame.geometry.appliedVideoRotationAngle` is therefore diagnostic metadata. Do not apply it again.
-
-The frame stream is deliberately bounded:
+Apple physically rotates frames delivered by `AVCaptureVideoDataOutput` when `videoRotationAngle` is set. `CameraFrame.geometry.appliedVideoRotationAngle` is diagnostic metadata. Do not apply it again.
 
 ```text
 capture 60 fps
@@ -161,31 +150,17 @@ capture 60 fps
     └─ frame 103 ── newest pending
 ```
 
-There is no growing queue to “catch up” later.
+There is no growing queue to catch up later.
 
 ## Rotation
 
-Create a new `CameraRotation` for each active `AVCaptureDevice`:
-
-```swift
-@MainActor
-let rotation = CameraRotation(device: device, previewLayer: previewLayer)
-```
-
-Use the preview angle for preview and capture angle for captured media / canonical analysis frames:
-
-```swift
-rotation.applyPreviewAngle(to: previewConnection)
-rotation.applyCaptureAngle(to: analysisConnection)
-```
-
-Do not calculate these angles from interface orientation, `UIDeviceOrientation`, front/back position, pixel dimensions, or an iPhone model table.
+Preview and capture angles are different responsibilities. Use `CameraRotation` / `AVCaptureDevice.RotationCoordinator`; do not calculate camera angles from interface orientation, `UIDeviceOrientation`, front/back position, pixel dimensions, or an iPhone model table.
 
 See [Camera Rotation](docs/CAMERA_ROTATION.md).
 
 ## Mirroring
 
-Preview mirroring and media identity are independent.
+Preview mirroring and media identity are independent. The usual policy is mirrored front preview, non-mirrored analysis/saved media.
 
 ```swift
 CameraConnectionConfiguration.configurePreviewMirroring(
@@ -195,11 +170,9 @@ CameraConnectionConfiguration.configurePreviewMirroring(
 CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: analysisConnection)
 ```
 
-The usual policy is mirrored front preview, non-mirrored analysis/saved media.
-
 ## Vision
 
-Vision is part of the foundation because its coordinate convention is one of the major camera-geometry boundaries. Vision uses normalized coordinates with a lower-left origin; convert immediately at the boundary:
+Vision normalized geometry uses a lower-left origin. Convert it at the Vision boundary:
 
 ```swift
 let canonicalBox = VisionGeometry.canonicalRect(
@@ -207,27 +180,32 @@ let canonicalBox = VisionGeometry.canonicalRect(
 )
 ```
 
-Live Vision work should consume `CameraFrameStream.frames` sequentially. The stream already buffers only the newest pending frame, so a slow analyzer does not create an ever-growing FIFO backlog.
-
-Use `WorkGeneration` to reject results produced under obsolete camera/analyzer configuration:
+For live work, use `CameraVisionWorker<Value>`. It composes the low-level Vision pipeline with generation tracking, one in-flight request, newest-one pending work, frame identity, and a final MainActor delivery gate.
 
 ```swift
-let generation = WorkGeneration()
-let workGeneration = generation.current
+let faces = CameraVisionWorker<[CanonicalRect]>(
+    makeRequest: { VNDetectFaceRectanglesRequest() },
+    extract: { request in
+        let observations = request.results as? [VNFaceObservation] ?? []
+        return observations.map {
+            VisionGeometry.canonicalRect(fromVisionNormalized: $0.boundingBox)
+        }
+    },
+    delivery: { output in
+        faceBoxes = output.value
+    }
+)
 
-// Perform Vision away from MainActor.
-// Before publishing:
-guard generation.isCurrent(workGeneration) else { return }
+faces.submit(frame)
 ```
 
-On a camera switch, analyzer settings change, or screen departure:
+When camera identity, analyzer settings, or the consuming screen changes:
 
 ```swift
-generation.invalidate()
-request.cancel() // when a VNRequest is currently in flight
+faces.invalidate()
 ```
 
-Cancellation controls resources; generation comparison is the correctness guarantee. See [Vision Pipeline](docs/VISION_PIPELINE.md).
+Concrete request choice and semantic result mapping stay in the app. See [Vision Pipeline](docs/VISION_PIPELINE.md).
 
 ## Touch and `AVCaptureVideoPreviewLayer`
 
@@ -244,26 +222,13 @@ Do not store that value as a `CanonicalPoint`. For app-semantic points on a cust
 
 ## Diagnostics
 
-Camera coordinate bugs should be observable, not guessed at. During development record at least:
-
-```text
-camera position
-preview rotation angle
-capture rotation angle
-analysis connection angle
-preview mirrored
-analysis mirrored
-frame dimensions
-frames delivered
-frames dropped by AVFoundation
-pending frames replaced by latest-frame buffering
-```
+During development record at least camera position, preview/capture/analysis rotation angles, mirror flags, frame dimensions, delivered frames, AVFoundation drops, and newest-buffer replacements.
 
 See [Validation](docs/VALIDATION.md).
 
 ## The rules that matter most
 
-The project keeps explicit prohibited patterns in [PROHIBITIONS.md](docs/PROHIBITIONS.md). The short version:
+See [Prohibited Patterns](docs/PROHIBITIONS.md). The short version:
 
 - no per-device angle tables
 - no UI-orientation-to-camera-angle conversion
@@ -272,13 +237,15 @@ The project keeps explicit prohibited patterns in [PROHIBITIONS.md](docs/PROHIBI
 - no raw Vision coordinates in UI state
 - no unbounded frame queues
 - no heavy processing on MainActor or capture callbacks
-- no stale result publication after a configuration generation changes
+- no stale result publication after a generation changes
 - no width/height-based orientation guessing
+- no external mutation of `CameraCaptureSession`'s capture graph
 
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Coordinate Spaces](docs/COORDINATE_SPACES.md)
+- [Capture Session](docs/CAPTURE_SESSION.md)
 - [Camera Rotation](docs/CAMERA_ROTATION.md)
 - [Vision Pipeline](docs/VISION_PIPELINE.md)
 - [Prohibited Patterns](docs/PROHIBITIONS.md)
