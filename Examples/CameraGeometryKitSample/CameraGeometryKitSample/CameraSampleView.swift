@@ -271,10 +271,11 @@ struct CameraSampleView: View {
     }
 }
 
+@MainActor
 private struct CameraPreviewView: UIViewRepresentable {
     let camera: CameraCaptureSession
     let deviceUniqueID: String?
-    let onDiagnostics: (AppPreviewDiagnostics) -> Void
+    let onDiagnostics: @MainActor (AppPreviewDiagnostics) -> Void
 
     func makeUIView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
@@ -294,7 +295,7 @@ private final class PreviewContainerView: UIView {
         AVCaptureVideoPreviewLayer.self
     }
 
-    var onDiagnostics: ((AppPreviewDiagnostics) -> Void)?
+    var onDiagnostics: (@MainActor (AppPreviewDiagnostics) -> Void)?
 
     private var cameraRotation: CameraRotation?
     private var latestLibraryRotation: CameraRotationSnapshot?
@@ -322,9 +323,11 @@ private final class PreviewContainerView: UIView {
                 cameraRotation = rotation
                 latestLibraryRotation = rotation.snapshot
                 rotation.observe { [weak self] snapshot in
-                    guard let self else { return }
-                    self.latestLibraryRotation = snapshot
-                    self.publishDiagnostics()
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.latestLibraryRotation = snapshot
+                        self.publishDiagnostics()
+                    }
                 }
             }
         }
