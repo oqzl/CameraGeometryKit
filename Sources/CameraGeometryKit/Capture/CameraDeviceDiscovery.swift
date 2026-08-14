@@ -41,7 +41,7 @@ public struct CameraDeviceRequest: @unchecked Sendable {
     }
 }
 
-public struct CameraDeviceInfo: @unchecked Sendable, Hashable {
+public struct CameraDeviceInfo: @unchecked Sendable, Hashable, Identifiable {
     public let uniqueID: String
     public let localizedName: String
     public let deviceType: AVCaptureDevice.DeviceType
@@ -50,6 +50,7 @@ public struct CameraDeviceInfo: @unchecked Sendable, Hashable {
     public let minZoomFactor: CGFloat
     public let maxZoomFactor: CGFloat
 
+    public var id: String { uniqueID }
     public var deviceTypeRawValue: String { deviceType.rawValue }
 
     public init(
@@ -72,6 +73,20 @@ public struct CameraDeviceInfo: @unchecked Sendable, Hashable {
 }
 
 public enum CameraDeviceDiscovery {
+    /// Current nondeprecated camera device types relevant to iOS camera apps.
+    public static let videoDeviceTypes: [AVCaptureDevice.DeviceType] = [
+        .builtInUltraWideCamera,
+        .builtInWideAngleCamera,
+        .builtInTelephotoCamera,
+        .builtInDualCamera,
+        .builtInDualWideCamera,
+        .builtInTripleCamera,
+        .builtInTrueDepthCamera,
+        .builtInLiDARDepthCamera,
+        .continuityCamera,
+        .external,
+    ]
+
     /// Returns matching devices in the same priority order as
     /// `preferredDeviceTypes`. An exact request returns either one matching
     /// device or an empty array.
@@ -111,6 +126,21 @@ public enum CameraDeviceDiscovery {
     /// Returns stable, app-facing metadata for all devices matching the request.
     public static func deviceInfos(matching request: CameraDeviceRequest) -> [CameraDeviceInfo] {
         devices(matching: request).map(info(for:))
+    }
+
+    /// Returns every currently discoverable video device for one position.
+    public static func availableDeviceInfos(position: CameraPosition) -> [CameraDeviceInfo] {
+        deviceInfos(
+            matching: CameraDeviceRequest(
+                position: position,
+                preferredDeviceTypes: videoDeviceTypes
+            )
+        )
+    }
+
+    /// Returns front and back devices suitable for presenting a device picker.
+    public static func availableDeviceInfos() -> [CameraDeviceInfo] {
+        availableDeviceInfos(position: .back) + availableDeviceInfos(position: .front)
     }
 
     public static func info(for device: AVCaptureDevice) -> CameraDeviceInfo {
