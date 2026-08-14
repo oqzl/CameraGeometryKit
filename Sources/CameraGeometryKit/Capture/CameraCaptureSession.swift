@@ -16,7 +16,7 @@ public enum CameraCaptureSessionError: Error, LocalizedError, Sendable {
         case .cameraPermissionDenied:
             return "Camera access is not authorized."
         case .cameraUnavailable(let position):
-            return "No camera is available for position \(position.rawValue)."
+            return "No requested camera is available for position \(position.rawValue)."
         case .cannotCreateInput(let message):
             return "Could not create the camera input: \(message)"
         case .cannotAddInput:
@@ -37,19 +37,25 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
     public let cameraPosition: CameraPosition
     public let deviceUniqueID: String?
     public let deviceName: String?
+    public let deviceTypeRawValue: String?
+    public let supportsDepthData: Bool
 
     public init(
         isConfigured: Bool,
         isRunning: Bool,
         cameraPosition: CameraPosition,
         deviceUniqueID: String?,
-        deviceName: String?
+        deviceName: String?,
+        deviceTypeRawValue: String? = nil,
+        supportsDepthData: Bool = false
     ) {
         self.isConfigured = isConfigured
         self.isRunning = isRunning
         self.cameraPosition = cameraPosition
         self.deviceUniqueID = deviceUniqueID
         self.deviceName = deviceName
+        self.deviceTypeRawValue = deviceTypeRawValue
+        self.supportsDepthData = supportsDepthData
     }
 }
 
@@ -57,7 +63,7 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
 ///
 /// Responsibilities are intentionally narrow:
 /// - camera authorization;
-/// - one video input at a time;
+/// - one capability-selected video input at a time;
 /// - `CameraFrameStream.output`;
 /// - `AVCapturePhotoOutput`;
 /// - serialized start/stop and camera switching;
@@ -77,6 +83,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
     private var videoInput: AVCaptureDeviceInput?
     private var activeDevice: AVCaptureDevice?
+    private var activeDeviceRequest: CameraDeviceRequest?
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var captureRotationObservation: NSKeyValueObservation?
     private var isConfigured = false
@@ -107,10 +114,19 @@ public final class CameraCaptureSession: @unchecked Sendable {
         stateLock.withLock { stateStorage }
     }
 
-    /// Requests camera authorization if necessary, configures the minimal
-    /// capture graph, and starts the session off the main thread.
+    /// Starts with the default built-in wide-angle camera for the requested
+    /// position. Use `start(deviceRequest:)` when a product prefers TrueDepth,
+    /// ultra-wide, LiDAR, or another AVFoundation device type.
     @discardableResult
     public func start(position: CameraPosition = .back) async throws -> CameraCaptureSessionState {
+        try await start(deviceRequest: .wideAngle(position: position))
+    }
+
+    /// Requests camera authorization if necessary, resolves the requested
+    /// device through `AVCaptureDevice.DiscoverySession`, configures the minimal
+    /// capture graph, and starts the session off the main thread.
+    @discardableResult
+    public func start(deviceRequest: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
         guard await Self.cameraAccessGranted() else {
             throw CameraCaptureSessionError.cameraPermissionDenied
         }
@@ -119,9 +135,9 @@ public final class CameraCaptureSession: @unchecked Sendable {
             sessionQueue.async { [self] in
                 do {
                     if !isConfigured {
-                        try configureLocked(position: position)
-                    } else if currentPositionLocked != position {
-                        try setCameraPositionLocked(position)
+                        try configureLocked(deviceRequest: deviceRequest)
+                    } else if activeDeviceRequest?.matches(deviceRequest) != true {
+                        try setDeviceLocked(deviceRequest)
                     }
 
                     if !captureSession.isRunning {
@@ -150,9 +166,8 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
-    /// Selects the default wide-angle camera for the requested position.
-    /// Reconfiguration is serialized with start/stop and rebuilds the rotation
-    /// coordinator for the new physical camera.
+    /// Keeps the current device-type preference order while moving to the
+    /// requested front/back position.
     @discardableResult
     public func setCameraPosition(_ position: CameraPosition) async throws -> CameraCaptureSessionState {
         try await withCheckedThrowingContinuation { continuation in
@@ -161,7 +176,27 @@ public final class CameraCaptureSession: @unchecked Sendable {
                     guard isConfigured else {
                         throw CameraCaptureSessionError.notConfigured
                     }
-                    try setCameraPositionLocked(position)
+                    let request = (activeDeviceRequest ?? .wideAngle(position: currentPositionLocked))
+                        .withPosition(position)
+                    try setDeviceLocked(request)
+                    continuation.resume(returning: stateLock.withLock { stateStorage })
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Selects a physical camera by capability and preference order.
+    @discardableResult
+    public func setDevice(_ request: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
+        try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async { [self] in
+                do {
+                    guard isConfigured else {
+                        throw CameraCaptureSessionError.notConfigured
+                    }
+                    try setDeviceLocked(request)
                     continuation.resume(returning: stateLock.withLock { stateStorage })
                 } catch {
                     continuation.resume(throwing: error)
@@ -179,7 +214,9 @@ public final class CameraCaptureSession: @unchecked Sendable {
                         throw CameraCaptureSessionError.notConfigured
                     }
                     let target: CameraPosition = currentPositionLocked == .front ? .back : .front
-                    try setCameraPositionLocked(target)
+                    let request = (activeDeviceRequest ?? .wideAngle(position: currentPositionLocked))
+                        .withPosition(target)
+                    try setDeviceLocked(request)
                     continuation.resume(returning: stateLock.withLock { stateStorage })
                 } catch {
                     continuation.resume(throwing: error)
@@ -207,7 +244,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
     }
 
     /// Creates the preview-side rotation owner for the currently active device.
-    /// Recreate it after `setCameraPosition` / `switchCamera` succeeds.
+    /// Recreate it after `setCameraPosition`, `setDevice`, or `switchCamera`.
     @MainActor
     public func makePreviewRotation(previewLayer: CALayer? = nil) -> CameraRotation? {
         guard let device = stateLock.withLock({ activeDeviceForPreview }) else { return nil }
@@ -231,8 +268,8 @@ public final class CameraCaptureSession: @unchecked Sendable {
         activeDevice.map { CameraPosition($0.position) } ?? .unspecified
     }
 
-    private func configureLocked(position: CameraPosition) throws {
-        let device = try makeDevice(position: position)
+    private func configureLocked(deviceRequest: CameraDeviceRequest) throws {
+        let device = try makeDevice(request: deviceRequest)
         let input = try makeInput(device: device)
 
         captureSession.beginConfiguration()
@@ -264,22 +301,27 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
         videoInput = input
         activeDevice = device
+        activeDeviceRequest = deviceRequest
         isConfigured = true
         frameStream.setCameraPosition(device.position)
         rebuildCaptureRotationCoordinatorLocked(for: device)
         updateStateLocked()
     }
 
-    private func setCameraPositionLocked(_ position: CameraPosition) throws {
-        guard position != .unspecified else {
-            throw CameraCaptureSessionError.cameraUnavailable(position)
+    private func setDeviceLocked(_ request: CameraDeviceRequest) throws {
+        guard request.position != .unspecified else {
+            throw CameraCaptureSessionError.cameraUnavailable(request.position)
         }
-        guard currentPositionLocked != position else { return }
         guard let oldInput = videoInput, let oldDevice = activeDevice else {
             throw CameraCaptureSessionError.notConfigured
         }
 
-        let newDevice = try makeDevice(position: position)
+        let newDevice = try makeDevice(request: request)
+        if newDevice.uniqueID == oldDevice.uniqueID {
+            activeDeviceRequest = request
+            updateStateLocked()
+            return
+        }
         let newInput = try makeInput(device: newDevice)
 
         captureRotationObservation = nil
@@ -302,28 +344,15 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
         videoInput = newInput
         activeDevice = newDevice
+        activeDeviceRequest = request
         frameStream.setCameraPosition(newDevice.position)
         rebuildCaptureRotationCoordinatorLocked(for: newDevice)
         updateStateLocked()
     }
 
-    private func makeDevice(position: CameraPosition) throws -> AVCaptureDevice {
-        let avPosition: AVCaptureDevice.Position
-        switch position {
-        case .front:
-            avPosition = .front
-        case .back:
-            avPosition = .back
-        case .unspecified:
-            throw CameraCaptureSessionError.cameraUnavailable(position)
-        }
-
-        guard let device = AVCaptureDevice.default(
-            .builtInWideAngleCamera,
-            for: .video,
-            position: avPosition
-        ) else {
-            throw CameraCaptureSessionError.cameraUnavailable(position)
+    private func makeDevice(request: CameraDeviceRequest) throws -> AVCaptureDevice {
+        guard let device = CameraDeviceDiscovery.preferredDevice(for: request) else {
+            throw CameraCaptureSessionError.cameraUnavailable(request.position)
         }
         return device
     }
@@ -386,7 +415,9 @@ public final class CameraCaptureSession: @unchecked Sendable {
             isRunning: isRunning,
             cameraPosition: device.map { CameraPosition($0.position) } ?? .unspecified,
             deviceUniqueID: device?.uniqueID,
-            deviceName: device?.localizedName
+            deviceName: device?.localizedName,
+            deviceTypeRawValue: device?.deviceType.rawValue,
+            supportsDepthData: device?.formats.contains { !$0.supportedDepthDataFormats.isEmpty } ?? false
         )
         stateLock.withLock {
             activeDeviceForPreview = device
