@@ -37,12 +37,6 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
     private var droppedByAVFoundation: UInt64 = 0
     private var replacedInLatestBuffer: UInt64 = 0
 
-    /// Creates a latest-frame stream.
-    ///
-    /// Pass `nil` to receive the device-native pixel format. This is the default
-    /// because forcing BGRA adds conversion and memory-bandwidth cost on typical
-    /// camera pipelines. Pass a concrete format only when the downstream
-    /// consumer actually requires it.
     public init(
         pixelFormat: OSType? = nil,
         queueLabel: String = "net.oqzl.CameraGeometryKit.frames"
@@ -73,7 +67,6 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
         continuation.finish()
     }
 
-    /// Update this whenever the active capture device changes.
     public func setCameraPosition(_ position: AVCaptureDevice.Position) {
         lock.withLock {
             cameraPosition = CameraPosition(position)
@@ -90,28 +83,87 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
         }
     }
 
+    func enqueueSynchronized(
+        sampleBuffer: CMSampleBuffer,
+        videoConnection: AVCaptureConnection,
+        depthData: AVDepthData?,
+        depthConnection: AVCaptureConnection?
+    ) {
+        enqueue(
+            sampleBuffer: sampleBuffer,
+            videoConnection: videoConnection,
+            depthData: depthData,
+            depthConnection: depthConnection
+        )
+    }
+
+    func recordDroppedFrame() {
+        lock.withLock {
+            droppedByAVFoundation &+= 1
+        }
+    }
+
     public func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        enqueue(
+            sampleBuffer: sampleBuffer,
+            videoConnection: connection,
+            depthData: nil,
+            depthConnection: nil
+        )
+    }
+
+    public func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        recordDroppedFrame()
+    }
+
+    private func enqueue(
+        sampleBuffer: CMSampleBuffer,
+        videoConnection: AVCaptureConnection,
+        depthData: AVDepthData?,
+        depthConnection: AVCaptureConnection?
+    ) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
         let frame: CameraFrame = lock.withLock {
             sequence &+= 1
             deliveredFrames &+= 1
 
+            let depthFrame = depthData.map { data in
+                let depthBuffer = data.depthDataMap
+                return CameraDepthFrame(
+                    depthData: data,
+                    timestamp: timestamp,
+                    geometry: CameraFrameGeometry(
+                        pixelWidth: CVPixelBufferGetWidth(depthBuffer),
+                        pixelHeight: CVPixelBufferGetHeight(depthBuffer),
+                        cameraPosition: cameraPosition,
+                        appliedVideoRotationAngle: depthConnection?.videoRotationAngle ?? videoConnection.videoRotationAngle,
+                        isMirrored: depthConnection?.isVideoMirrored ?? videoConnection.isVideoMirrored
+                    )
+                )
+            }
+
             return CameraFrame(
                 id: CameraFrameID(rawValue: sequence),
                 pixelBuffer: pixelBuffer,
-                timestamp: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                timestamp: timestamp,
                 geometry: CameraFrameGeometry(
                     pixelWidth: CVPixelBufferGetWidth(pixelBuffer),
                     pixelHeight: CVPixelBufferGetHeight(pixelBuffer),
                     cameraPosition: cameraPosition,
-                    appliedVideoRotationAngle: connection.videoRotationAngle,
-                    isMirrored: connection.isVideoMirrored
-                )
+                    appliedVideoRotationAngle: videoConnection.videoRotationAngle,
+                    isMirrored: videoConnection.isVideoMirrored
+                ),
+                depth: depthFrame
             )
         }
 
@@ -124,16 +176,6 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
             break
         @unknown default:
             break
-        }
-    }
-
-    public func captureOutput(
-        _ output: AVCaptureOutput,
-        didDrop sampleBuffer: CMSampleBuffer,
-        from connection: AVCaptureConnection
-    ) {
-        lock.withLock {
-            droppedByAVFoundation &+= 1
         }
     }
 }
