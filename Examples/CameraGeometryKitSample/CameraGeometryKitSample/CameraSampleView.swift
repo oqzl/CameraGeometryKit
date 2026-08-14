@@ -15,6 +15,11 @@ private struct AppPreviewDiagnostics: Equatable {
     let layerTransform: String
 }
 
+private struct DiagnosticsShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 @MainActor
 struct CameraSampleView: View {
     @StateObject private var model = CameraSampleModel()
@@ -22,6 +27,7 @@ struct CameraSampleView: View {
     @State private var previewDiagnostics: AppPreviewDiagnostics?
     @State private var deviceOrientation = UIDevice.current.orientation
     @State private var interfaceOrientation: UIInterfaceOrientation = .unknown
+    @State private var diagnosticsShareItem: DiagnosticsShareItem?
 
     var body: some View {
         ZStack {
@@ -58,6 +64,9 @@ struct CameraSampleView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             updateOrientationState(log: true)
+        }
+        .sheet(item: $diagnosticsShareItem) { item in
+            ActivityView(activityItems: [item.url])
         }
     }
 
@@ -100,10 +109,33 @@ struct CameraSampleView: View {
 
             if isDiagnosticsExpanded {
                 Divider().padding(.vertical, 4)
+
+                HStack(spacing: 8) {
+                    Text("ORIENTATION DIAGNOSTICS")
+                        .font(.caption2.monospaced().weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        copyDiagnosticsJSON()
+                    } label: {
+                        Label("Copy JSON", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+
+                    Button {
+                        exportDiagnosticsJSON()
+                    } label: {
+                        Label("Share JSON", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption2)
+                }
+
                 ScrollView(.vertical, showsIndicators: true) {
                     diagnosticsContent
                 }
-                .frame(maxHeight: 440)
+                .frame(maxHeight: 560)
             }
         }
         .padding(14)
@@ -198,6 +230,93 @@ struct CameraSampleView: View {
             .tint(.white)
             .foregroundStyle(.black)
             .disabled(!model.isRunning)
+        }
+    }
+
+    private func diagnosticsJSONObject() -> [String: Any] {
+        let session = model.librarySessionDiagnostics
+        let frame = model.deliveredFrameDiagnostics
+        let preview = previewDiagnostics
+
+        return [
+            "capturedAt": ISO8601DateFormatter().string(from: Date()),
+            "libraryToApp": [
+                "session": [
+                    "deviceName": model.state.deviceName ?? NSNull(),
+                    "deviceType": model.state.deviceTypeRawValue ?? NSNull(),
+                    "cameraPosition": model.state.cameraPosition.rawValue,
+                    "depthEnabled": model.state.depthCaptureEnabled,
+                    "activeFormat": [
+                        "width": session?.activeFormatWidth ?? NSNull(),
+                        "height": session?.activeFormatHeight ?? NSNull(),
+                    ],
+                    "analysisConnection": [
+                        "rotationAngle": session?.analysisConnectionRotationAngle ?? NSNull(),
+                        "mirrored": session?.analysisMirrored ?? NSNull(),
+                    ],
+                    "photoConnection": [
+                        "rotationAngle": session?.photoConnectionRotationAngle ?? NSNull(),
+                        "mirrored": session?.photoMirrored ?? NSNull(),
+                    ],
+                ],
+                "frame": [
+                    "id": frame?.frameID ?? NSNull(),
+                    "cameraPosition": frame?.cameraPosition.rawValue ?? NSNull(),
+                    "pixelWidth": frame?.pixelWidth ?? NSNull(),
+                    "pixelHeight": frame?.pixelHeight ?? NSNull(),
+                    "appliedVideoRotationAngle": frame?.appliedVideoRotationAngle ?? NSNull(),
+                    "mirrored": frame?.isMirrored ?? NSNull(),
+                ],
+                "previewRotation": [
+                    "requestedPreviewAngle": preview?.libraryPreviewRotationAngle ?? NSNull(),
+                    "requestedCaptureAngle": preview?.libraryCaptureRotationAngle ?? NSNull(),
+                ],
+            ],
+            "app": [
+                "deviceOrientation": deviceOrientationText(deviceOrientation),
+                "interfaceOrientation": interfaceOrientationText(interfaceOrientation),
+                "preview": [
+                    "boundsWidth": preview?.boundsWidth ?? NSNull(),
+                    "boundsHeight": preview?.boundsHeight ?? NSNull(),
+                    "videoGravity": preview?.videoGravity ?? NSNull(),
+                    "actualConnectionRotationAngle": preview?.connectionRotationAngle ?? NSNull(),
+                    "mirrored": preview?.connectionMirrored ?? NSNull(),
+                    "layerTransform": preview?.layerTransform ?? NSNull(),
+                ],
+            ],
+            "statistics": [
+                "deliveredFrames": model.statistics.deliveredFrames,
+                "droppedByAVFoundation": model.statistics.droppedByAVFoundation,
+                "replacedInLatestBuffer": model.statistics.replacedInLatestBuffer,
+            ],
+        ]
+    }
+
+    private func diagnosticsJSONData() -> Data? {
+        try? JSONSerialization.data(
+            withJSONObject: diagnosticsJSONObject(),
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func copyDiagnosticsJSON() {
+        guard let data = diagnosticsJSONData(),
+              let text = String(data: data, encoding: .utf8) else { return }
+        UIPasteboard.general.string = text
+    }
+
+    private func exportDiagnosticsJSON() {
+        guard let data = diagnosticsJSONData() else { return }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CameraGeometryKit-diagnostics-\(formatter.string(from: Date())).json")
+        do {
+            try data.write(to: url, options: .atomic)
+            diagnosticsShareItem = DiagnosticsShareItem(url: url)
+        } catch {
+            print("[OrientationDebug] failed to export JSON: \(error.localizedDescription)")
         }
     }
 
@@ -361,4 +480,14 @@ private final class PreviewContainerView: UIView {
         lastPublishedDiagnostics = snapshot
         onDiagnostics?(snapshot)
     }
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
