@@ -53,10 +53,18 @@ Depth を要求したのに選択 camera の active video format で要求した
 
 ## Preview / photo
 
+Preview の layout と `videoGravity` はアプリ側の責務です。カメラ固有の preview rotation 更新は CameraGeometryKit に任せられます。
+
 ```swift
 let previewLayer = AVCaptureVideoPreviewLayer(session: camera.captureSession)
-let previewRotation = camera.makePreviewRotation(previewLayer: previewLayer)
+previewLayer.videoGravity = .resizeAspect
+
+var previewRotationBinding = camera.bindPreviewRotation(to: previewLayer)
 ```
+
+`CameraPreviewRotationBinding` は現在の `RotationCoordinator` preview angle を即座に適用し、その後の angle 変更も自動で PreviewLayer connection へ反映します。Preview が有効な間は binding を保持してください。別の物理 camera に切り替えた場合は、古い binding を停止・破棄して新しい device 用に作り直します。
+
+`CameraRotation`、`observe(_:)`、`applyPreviewAngle(to:)` は診断や特殊な pipeline 用の低レベルAPIとして残します。通常のpreview実装では binding を優先します。
 
 写真撮影直前には capture angle を再同期します。
 
@@ -67,12 +75,13 @@ camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
 
 `AVCapturePhotoSettings` と結果/delegate policy はアプリ側の責務です。
 
-camera switch では semantic な解析処理を invalidate し、切替完了後に preview rotation も作り直します。
+camera switch では semantic な解析処理を invalidate し、切替成功後に preview binding も作り直します。
 
 ```swift
 await vision.invalidate()
 try await camera.switchCamera()
-let previewRotation = camera.makePreviewRotation(previewLayer: previewLayer)
+previewRotationBinding?.stop()
+previewRotationBinding = camera.bindPreviewRotation(to: previewLayer)
 ```
 
 Depth mode で切替先 camera の active video format が要求した depth type を提供できない場合は切替に失敗し、旧 input を復元します。成功時は新しい物理 camera 用の `RotationCoordinator` を再生成し、video / depth / photo connection に capture rotation と non-mirroring policy を再適用します。Front/Back 固定角度表や機種別 angle hack は使いません。
