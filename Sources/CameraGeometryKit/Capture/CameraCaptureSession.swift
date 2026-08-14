@@ -83,15 +83,16 @@ public final class CameraCaptureSession: @unchecked Sendable {
     public let photoOutput: AVCapturePhotoOutput
 
     public var depthOutput: AVCaptureDepthDataOutput? {
-        depthSynchronizer?.depthOutput
+        depthOutputStorage
     }
 
     private let sessionPreset: AVCaptureSession.Preset
     private let sessionQueue: DispatchQueue
     private let stateLock = NSLock()
     private let depthConfiguration: CameraDepthConfiguration?
-    private let depthSynchronizer: CameraDepthSynchronizer?
+    private let depthOutputStorage: AVCaptureDepthDataOutput?
 
+    private var depthDelivery: CameraDepthDelivery?
     private var videoInput: AVCaptureDeviceInput?
     private var activeDevice: AVCaptureDevice?
     private var activeDeviceRequest: CameraDeviceRequest?
@@ -120,9 +121,16 @@ public final class CameraCaptureSession: @unchecked Sendable {
         self.sessionPreset = sessionPreset
         self.frameStream = frameStream
         self.depthConfiguration = depthConfiguration
-        depthSynchronizer = depthConfiguration.map {
-            CameraDepthSynchronizer(frameStream: frameStream, configuration: $0)
+
+        if let depthConfiguration {
+            let output = AVCaptureDepthDataOutput()
+            output.alwaysDiscardsLateDepthData = true
+            output.isFilteringEnabled = depthConfiguration.isFilteringEnabled
+            depthOutputStorage = output
+        } else {
+            depthOutputStorage = nil
         }
+
         sessionQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
     }
 
@@ -322,6 +330,15 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
         captureSession.addOutput(photoOutput)
         captureSession.commitConfiguration()
+
+        if let depthOutput {
+            let delivery = CameraDepthDelivery(
+                frameStream: frameStream,
+                depthOutput: depthOutput
+            )
+            depthDelivery = delivery
+            delivery.start()
+        }
 
         videoInput = input
         activeDevice = device
