@@ -48,7 +48,11 @@ final class CameraSampleModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published var requestedPosition: CameraPosition = .back
 
-    let camera = CameraCaptureSession(sessionPreset: .high)
+    let camera: CameraCaptureSession
+
+    init(camera: CameraCaptureSession = CameraCaptureSession(sessionPreset: .high)) {
+        self.camera = camera
+    }
 
     var isRunning: Bool { state.isRunning }
 
@@ -80,7 +84,7 @@ final class CameraSampleModel: ObservableObject {
                 consumer.cancel()
             }
         } catch is CancellationError {
-            // The view-bound task is expected to be cancelled when the screen leaves.
+            // Expected when the sample leaves the screen.
         } catch {
             if !Task.isCancelled {
                 errorMessage = error.localizedDescription
@@ -118,7 +122,7 @@ final class CameraSampleModel: ObservableObject {
     ) async {
         var iterator = camera.frameStream.frames.makeAsyncIterator()
         let clock = ContinuousClock()
-        var lastPublication = clock.now - .seconds(2)
+        var lastPublication = clock.now - .seconds(3)
 
         while !Task.isCancelled, let frame = await iterator.next() {
             let now = clock.now
@@ -144,8 +148,6 @@ final class CameraSampleModel: ObservableObject {
         deliveredFrameDiagnostics = snapshot.diagnostics
         frameSummary = "\(snapshot.diagnostics.pixelWidth) × \(snapshot.diagnostics.pixelHeight) px  •  frame \(snapshot.diagnostics.frameID)"
         statistics = snapshot.statistics
-        // Session/device properties do not need to be re-read for every HUD refresh.
-        // They are refreshed only when the session starts/stops or the camera changes.
     }
 
     private func makeLibrarySessionDiagnostics() -> LibrarySessionDiagnostics? {
