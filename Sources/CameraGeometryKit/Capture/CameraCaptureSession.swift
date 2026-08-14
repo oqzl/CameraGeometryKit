@@ -210,6 +210,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
     private func configureLocked(request: CameraDeviceRequest) throws {
         let device = try makeDevice(request: request)
         let input = try makeInput(device: device)
+
         captureSession.beginConfiguration()
         if captureSession.canSetSessionPreset(sessionPreset) { captureSession.sessionPreset = sessionPreset }
         guard captureSession.canAddInput(input) else {
@@ -217,6 +218,9 @@ public final class CameraCaptureSession: @unchecked Sendable {
             throw CameraCaptureSessionError.cannotAddInput
         }
         captureSession.addInput(input)
+        captureSession.commitConfiguration()
+
+        captureSession.beginConfiguration()
         do {
             try configureDepthLocked(for: device)
             try addFrameOutputsLocked()
@@ -228,6 +232,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
             throw error
         }
         captureSession.commitConfiguration()
+
         videoInput = input
         activeDevice = device
         isConfigured = true
@@ -242,6 +247,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
         let newDevice = try makeDevice(request: request)
         guard newDevice.uniqueID != oldDevice.uniqueID else { return }
         let newInput = try makeInput(device: newDevice)
+
         captureRotationObservation = nil
         rotationCoordinator = nil
         captureSession.beginConfiguration()
@@ -251,6 +257,9 @@ public final class CameraCaptureSession: @unchecked Sendable {
             throw CameraCaptureSessionError.cannotAddInput
         }
         captureSession.addInput(newInput)
+        captureSession.commitConfiguration()
+
+        captureSession.beginConfiguration()
         do { try configureDepthLocked(for: newDevice) }
         catch {
             captureSession.removeInput(newInput)
@@ -258,6 +267,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
             throw error
         }
         captureSession.commitConfiguration()
+
         videoInput = newInput
         activeDevice = newDevice
         setStreamCameraPositionLocked(newDevice.position)
