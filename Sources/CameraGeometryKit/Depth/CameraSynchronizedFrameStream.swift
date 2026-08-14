@@ -1,10 +1,10 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-final class CameraDepthDelivery: NSObject, @unchecked Sendable {
+public final class CameraDepthDelivery: NSObject, @unchecked Sendable {
     let videoOutput: AVCaptureVideoDataOutput
     let depthOutput: AVCaptureDepthDataOutput
-    let frames: AsyncStream<CameraSynchronizedFrame>
+    public let frames: AsyncStream<CameraSynchronizedFrame>
 
     let callbackQueue: DispatchQueue
     let lock = NSLock()
