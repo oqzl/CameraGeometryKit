@@ -444,7 +444,7 @@ private struct DepthLabView: View {
                 } else {
                     Text(model.errorMessage ?? "Waiting for synchronized RGB/depth frames…")
                         .font(.caption)
-                        .foregroundStyle(model.errorMessage == nil ? .secondary : .red)
+                        .foregroundStyle(model.errorMessage == nil ? Color.secondary : Color.red)
                 }
                 Spacer()
             }
