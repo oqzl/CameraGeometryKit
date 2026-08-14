@@ -19,9 +19,24 @@ private struct AppPreviewDiagnostics: Equatable {
 private final class PreviewDiagnosticsStore: ObservableObject {
     @Published private(set) var snapshot: AppPreviewDiagnostics?
 
+    private var pendingSnapshot: AppPreviewDiagnostics?
+    private var publishTask: Task<Void, Never>?
+
     func publish(_ snapshot: AppPreviewDiagnostics) {
-        guard self.snapshot != snapshot else { return }
-        self.snapshot = snapshot
+        guard self.snapshot != snapshot, pendingSnapshot != snapshot else { return }
+        pendingSnapshot = snapshot
+        guard publishTask == nil else { return }
+
+        publishTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            defer { self.publishTask = nil }
+            guard !Task.isCancelled,
+                  let pendingSnapshot = self.pendingSnapshot else { return }
+            self.pendingSnapshot = nil
+            guard self.snapshot != pendingSnapshot else { return }
+            self.snapshot = pendingSnapshot
+        }
     }
 }
 
