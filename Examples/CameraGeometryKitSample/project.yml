@@ -1,0 +1,30 @@
+name: CameraGeometryKitSample
+options:
+  bundleIdPrefix: net.oqzl
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+packages:
+  CameraGeometryKit:
+    path: ../..
+targets:
+  CameraGeometryKitSample:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: CameraGeometryKitSample
+    dependencies:
+      - package: CameraGeometryKit
+        product: CameraGeometryKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.oqzl.CameraGeometryKitSample
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "カメラフレームとプレビューの座標変換を確認するためにカメラを使用します。"
+      configs:
+        Debug:
+          INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        Release:
+          INFOPLIST_KEY_UILaunchScreen_Generation: YES

@@ -145,7 +145,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
     @discardableResult
     public func setCamera(_ request: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CameraCaptureSessionState, Error>) in
             sessionQueue.async { [self] in
                 do {
                     guard isConfigured else { throw CameraCaptureSessionError.notConfigured }
@@ -171,7 +171,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
     }
 
     public func preparePhotoCapture() async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             sessionQueue.async { [self] in
                 guard isConfigured, let rotationCoordinator else {
                     continuation.resume(throwing: CameraCaptureSessionError.notConfigured)

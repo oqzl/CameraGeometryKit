@@ -67,6 +67,11 @@ import CameraGeometryKit
 
 The package manifest is iOS 18+ and Swift 6 only.
 
+## Sample App
+
+The repository includes a small SwiftUI camera app under
+`Examples/CameraGeometryKitSample`. See its [build instructions](Examples/CameraGeometryKitSample/README.md).
+
 ## Canonical coordinates
 
 Do not put screen points, Vision points, crop-relative points, and image points into the same untyped `CGPoint` variable.

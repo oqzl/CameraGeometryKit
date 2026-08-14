@@ -65,6 +65,11 @@ import CameraGeometryKit
 
 Package 自体が iOS 18+ / Swift 6 固定です。
 
+## サンプルアプリ
+
+`Examples/CameraGeometryKitSample` に SwiftUI のカメラサンプルを追加しています。
+[ビルド手順](Examples/CameraGeometryKitSample/README-ja.md)に従って実機で実行できます。
+
 ## Canonical 座標
 
 Screen、Vision、crop-relative、image の点を同じ無印 `CGPoint` で持ちません。
