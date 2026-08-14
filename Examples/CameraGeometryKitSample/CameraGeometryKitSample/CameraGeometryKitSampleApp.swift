@@ -22,7 +22,7 @@ private struct SampleRootView: View {
                 .tabItem { Label("Capture", systemImage: "camera") }
 
             GeometryLabView()
-                .tabItem { Label("Geometry", systemImage: "square.resize") }
+                .tabItem { Label("Geometry", systemImage: "scope") }
 
             VisionLabView()
                 .tabItem { Label("Vision", systemImage: "viewfinder") }
@@ -42,15 +42,34 @@ private struct SampleRootView: View {
 private struct LabCameraPreview: UIViewRepresentable {
     let camera: CameraCaptureSession
     let deviceUniqueID: String?
+    let videoGravity: AVLayerVideoGravity
+
+    init(
+        camera: CameraCaptureSession,
+        deviceUniqueID: String?,
+        videoGravity: AVLayerVideoGravity = .resizeAspect
+    ) {
+        self.camera = camera
+        self.deviceUniqueID = deviceUniqueID
+        self.videoGravity = videoGravity
+    }
 
     func makeUIView(context: Context) -> LabPreviewContainerView {
         let view = LabPreviewContainerView()
-        view.configure(camera: camera, deviceUniqueID: deviceUniqueID)
+        view.configure(
+            camera: camera,
+            deviceUniqueID: deviceUniqueID,
+            videoGravity: videoGravity
+        )
         return view
     }
 
     func updateUIView(_ view: LabPreviewContainerView, context: Context) {
-        view.configure(camera: camera, deviceUniqueID: deviceUniqueID)
+        view.configure(
+            camera: camera,
+            deviceUniqueID: deviceUniqueID,
+            videoGravity: videoGravity
+        )
     }
 }
 
@@ -68,12 +87,16 @@ private final class LabPreviewContainerView: UIView {
         return layer
     }
 
-    func configure(camera: CameraCaptureSession, deviceUniqueID: String?) {
+    func configure(
+        camera: CameraCaptureSession,
+        deviceUniqueID: String?,
+        videoGravity: AVLayerVideoGravity
+    ) {
         if previewLayer.session !== camera.captureSession {
             previewLayer.session = camera.captureSession
         }
-        if previewLayer.videoGravity != .resizeAspect {
-            previewLayer.videoGravity = .resizeAspect
+        if previewLayer.videoGravity != videoGravity {
+            previewLayer.videoGravity = videoGravity
         }
 
         guard observedDeviceUniqueID != deviceUniqueID || previewRotationBinding == nil else { return }
@@ -93,111 +116,209 @@ private final class LabPreviewContainerView: UIView {
     }
 }
 
+private struct LabCameraSwitchButton: View {
+    let position: CameraPosition
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.triangle.2.circlepath.camera")
+                .font(.title3.weight(.semibold))
+                .frame(width: 42, height: 42)
+                .background(Color.black.opacity(0.76), in: Circle())
+                .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+        .accessibilityLabel(position == .front ? "背面カメラに切り替え" : "前面カメラに切り替え")
+    }
+}
+
+private struct LabHUD<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption2.monospaced().weight(.bold))
+            content()
+        }
+        .font(.caption2.monospaced())
+        .foregroundStyle(.white)
+        .padding(8)
+        .background(Color.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
 // MARK: - Geometry
 
-private struct GeometryLabView: View {
-    @State private var contentMode: CameraContentMode = .aspectFit
-    @State private var mirrored = false
-    @State private var tappedCanonical: CanonicalPoint?
+@MainActor
+private final class GeometryLabModel: ObservableObject {
+    @Published private(set) var state = CameraCaptureSessionState(
+        isConfigured: false,
+        isRunning: false,
+        cameraPosition: .unspecified,
+        deviceUniqueID: nil,
+        deviceName: nil
+    )
+    @Published private(set) var frameSize = CGSize.zero
+    @Published private(set) var errorMessage: String?
 
-    private let imageSize = CGSize(width: 1920, height: 1080)
-    private let testRect = CanonicalRect(x: 0.22, y: 0.18, width: 0.34, height: 0.42)
+    let camera = CameraCaptureSession(sessionPreset: .high)
+
+    func run() async {
+        do {
+            state = try await camera.start(position: .back)
+            errorMessage = nil
+            let camera = camera
+            let consumer = Task.detached(priority: .userInitiated) { [weak self] in
+                var iterator = camera.frameStream.frames.makeAsyncIterator()
+                var lastSize = CGSize.zero
+                while !Task.isCancelled, let frame = await iterator.next() {
+                    let size = frame.geometry.pixelSize
+                    guard size != lastSize else { continue }
+                    lastSize = size
+                    await MainActor.run { [weak self] in
+                        self?.frameSize = size
+                    }
+                }
+            }
+            await withTaskCancellationHandler {
+                await consumer.value
+            } onCancel: {
+                consumer.cancel()
+            }
+        } catch is CancellationError {
+        } catch {
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
+        }
+
+        await camera.stop()
+        if !Task.isCancelled { state = camera.currentState }
+    }
+
+    func switchCamera() async {
+        guard state.isRunning else { return }
+        do {
+            let target: CameraPosition = state.cameraPosition == .front ? .back : .front
+            state = try await camera.setCameraPosition(target)
+            frameSize = .zero
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct GeometryLabView: View {
+    @StateObject private var model = GeometryLabModel()
+    @State private var contentMode: CameraContentMode = .aspectFit
+    @State private var tappedCanonical: CanonicalPoint?
+    @State private var lastTapWasOutside = false
+
+    private var videoGravity: AVLayerVideoGravity {
+        contentMode == .aspectFit ? .resizeAspect : .resizeAspectFill
+    }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                HStack {
-                    Picker("Mode", selection: $contentMode) {
-                        Text("Fit").tag(CameraContentMode.aspectFit)
-                        Text("Fill").tag(CameraContentMode.aspectFill)
-                    }
-                    .pickerStyle(.segmented)
+            GeometryReader { proxy in
+                let mirrored = model.state.cameraPosition == .front
+                let mapping = ViewportMapping(
+                    imageSize: model.frameSize,
+                    viewportSize: proxy.size,
+                    contentMode: contentMode,
+                    isMirrored: mirrored
+                )
 
-                    Toggle("Mirror", isOn: $mirrored)
-                        .labelsHidden()
-                    Text("Mirror")
-                        .font(.caption)
-                }
-                .padding(.horizontal)
+                ZStack {
+                    Color.black
 
-                GeometryReader { proxy in
-                    let mapping = ViewportMapping(
-                        imageSize: imageSize,
-                        viewportSize: proxy.size,
-                        contentMode: contentMode,
-                        isMirrored: mirrored
+                    LabCameraPreview(
+                        camera: model.camera,
+                        deviceUniqueID: model.state.deviceUniqueID,
+                        videoGravity: videoGravity
                     )
 
-                    ZStack(alignment: .topLeading) {
-                        Color.black
+                    geometryOverlay(mapping: mapping)
 
-                        if let imageRect = mapping.imageRect {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.12))
-                                .overlay {
-                                    Canvas { context, size in
-                                        let step = size.width / 8
-                                        for index in 1..<8 {
-                                            let x = CGFloat(index) * step
-                                            var path = Path()
-                                            path.move(to: CGPoint(x: x, y: 0))
-                                            path.addLine(to: CGPoint(x: x, y: size.height))
-                                            context.stroke(path, with: .color(.white.opacity(0.22)), lineWidth: 1)
-                                        }
-                                        let yStep = size.height / 5
-                                        for index in 1..<5 {
-                                            let y = CGFloat(index) * yStep
-                                            var path = Path()
-                                            path.move(to: CGPoint(x: 0, y: y))
-                                            path.addLine(to: CGPoint(x: size.width, y: y))
-                                            context.stroke(path, with: .color(.white.opacity(0.22)), lineWidth: 1)
-                                        }
+                    VStack {
+                        HStack(alignment: .top) {
+                            LabHUD(title: "VIEWPORT → CANONICAL") {
+                                Text(model.state.deviceName ?? "starting camera…")
+                                Text(contentMode == .aspectFit ? "preview: aspectFit" : "preview: aspectFill")
+                                Text("mirrored preview: \(mirrored ? "true" : "false")")
+                                if let point = tappedCanonical {
+                                    Text(String(format: "canonical: %.4f, %.4f", point.x, point.y))
+                                    if let roundTrip = mapping.viewportPoint(from: point) {
+                                        Text(String(format: "round trip: %.1f, %.1f pt", roundTrip.x, roundTrip.y))
                                     }
+                                } else if lastTapWasOutside {
+                                    Text("tap: letterbox (no image point)")
+                                } else {
+                                    Text("tap the preview to inspect mapping")
                                 }
-                                .frame(width: imageRect.width, height: imageRect.height)
-                                .position(x: imageRect.midX, y: imageRect.midY)
+                                if let error = model.errorMessage {
+                                    Text(error).foregroundStyle(Color.red)
+                                }
+                            }
+                            Spacer()
+                            LabCameraSwitchButton(
+                                position: model.state.cameraPosition,
+                                enabled: model.state.isRunning
+                            ) {
+                                Task { await model.switchCamera() }
+                            }
                         }
-
-                        if let rect = mapping.viewportRect(from: testRect) {
-                            Rectangle()
-                                .stroke(Color.yellow, lineWidth: 3)
-                                .frame(width: rect.width, height: rect.height)
-                                .position(x: rect.midX, y: rect.midY)
+                        Spacer()
+                        Picker("Content mode", selection: $contentMode) {
+                            Text("Fit").tag(CameraContentMode.aspectFit)
+                            Text("Fill").tag(CameraContentMode.aspectFill)
                         }
-
-                        if let tappedCanonical,
-                           let point = mapping.viewportPoint(from: tappedCanonical) {
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 14, height: 14)
-                                .position(point)
-                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 220)
+                        .padding(8)
+                        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture { point in
-                        tappedCanonical = mapping.canonicalPoint(fromViewport: point)
-                    }
+                    .padding(10)
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .padding(.horizontal)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("ViewportMapping • CanonicalPoint • CanonicalRect")
-                        .font(.caption.monospaced().weight(.semibold))
-                    if let point = tappedCanonical {
-                        Text(String(format: "tap canonical  x %.4f  y %.4f  inside %@", point.x, point.y, point.isInsideUnitSquare ? "true" : "false"))
-                    } else {
-                        Text("Tap the viewport. Letterbox taps return nil in Fit mode.")
+                .contentShape(Rectangle())
+                .gesture(
+                    SpatialTapGesture().onEnded { value in
+                        let canonical = mapping.canonicalPoint(fromViewport: value.location)
+                        tappedCanonical = canonical
+                        lastTapWasOutside = canonical == nil
                     }
-                    Text(String(format: "test rect  x %.2f y %.2f w %.2f h %.2f", testRect.x, testRect.y, testRect.width, testRect.height))
-                }
-                .font(.caption2.monospaced())
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+                )
             }
             .navigationTitle("Geometry Lab")
             .navigationBarTitleDisplayMode(.inline)
+            .task { await model.run() }
+        }
+    }
+
+    @ViewBuilder
+    private func geometryOverlay(mapping: ViewportMapping) -> some View {
+        if let imageRect = mapping.imageRect {
+            Rectangle()
+                .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                .frame(width: imageRect.width, height: imageRect.height)
+                .position(x: imageRect.midX, y: imageRect.midY)
+                .allowsHitTesting(false)
+        }
+
+        if let tappedCanonical,
+           let point = mapping.viewportPoint(from: tappedCanonical) {
+            ZStack {
+                Circle().stroke(Color.cyan, lineWidth: 2).frame(width: 22, height: 22)
+                Rectangle().fill(Color.cyan).frame(width: 30, height: 1)
+                Rectangle().fill(Color.cyan).frame(width: 1, height: 30)
+            }
+            .position(point)
+            .allowsHitTesting(false)
         }
     }
 }
@@ -237,13 +358,15 @@ private final class VisionLabModel: ObservableObject {
             errorMessage = nil
             let camera = camera
             let worker = worker
-            let consumer = Task.detached(priority: .userInitiated) {
+            let consumer = Task.detached(priority: .userInitiated) { [weak self] in
                 var iterator = camera.frameStream.frames.makeAsyncIterator()
+                var lastSize = CGSize.zero
                 while !Task.isCancelled, let frame = await iterator.next() {
                     await worker.submit(frame)
                     let size = frame.geometry.pixelSize
-                    await MainActor.run { [weak self] in
-                        if self?.frameSize != size { self?.frameSize = size }
+                    if size != lastSize {
+                        lastSize = size
+                        await MainActor.run { [weak self] in self?.frameSize = size }
                     }
                 }
             }
@@ -254,12 +377,27 @@ private final class VisionLabModel: ObservableObject {
             }
         } catch is CancellationError {
         } catch {
-            errorMessage = error.localizedDescription
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
         }
 
         await worker.invalidate()
         await camera.stop()
         if !Task.isCancelled { state = camera.currentState }
+    }
+
+    func switchCamera() async {
+        guard state.isRunning else { return }
+        do {
+            await worker.invalidate()
+            let target: CameraPosition = state.cameraPosition == .front ? .back : .front
+            state = try await camera.setCameraPosition(target)
+            faces = []
+            frameSize = .zero
+            acceptedFrameID = nil
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -268,42 +406,80 @@ private struct VisionLabView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .topLeading) {
-                GeometryReader { proxy in
-                    LabCameraPreview(camera: model.camera, deviceUniqueID: model.state.deviceUniqueID)
-                        .background(Color.black)
+            GeometryReader { proxy in
+                let mapping = ViewportMapping(
+                    imageSize: model.frameSize,
+                    viewportSize: proxy.size,
+                    contentMode: .aspectFit,
+                    isMirrored: model.state.cameraPosition == .front
+                )
 
-                    let mapping = ViewportMapping(
-                        imageSize: model.frameSize,
-                        viewportSize: proxy.size,
-                        contentMode: .aspectFit,
-                        isMirrored: model.state.cameraPosition == .front
+                ZStack {
+                    Color.black
+                    LabCameraPreview(
+                        camera: model.camera,
+                        deviceUniqueID: model.state.deviceUniqueID
                     )
-                    ForEach(Array(model.faces.enumerated()), id: \.offset) { _, face in
-                        if let rect = mapping.viewportRect(from: face) {
-                            Rectangle()
-                                .stroke(Color.yellow, lineWidth: 3)
-                                .frame(width: rect.width, height: rect.height)
-                                .position(x: rect.midX, y: rect.midY)
-                        }
-                    }
-                }
-                .ignoresSafeArea(edges: .bottom)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("CameraVisionWorker / DetectFaceRectanglesRequest")
-                    Text("faces \(model.faces.count) • accepted frame \(model.acceptedFrameID.map(String.init) ?? "—")")
-                    if let error = model.errorMessage { Text(error).foregroundStyle(.red) }
+                    visionReticle
+                    faceOverlay(mapping: mapping)
+
+                    VStack {
+                        HStack(alignment: .top) {
+                            LabHUD(title: "VISION / FACE RECTANGLES") {
+                                Text(model.state.deviceName ?? "starting camera…")
+                                Text("faces: \(model.faces.count)")
+                                Text("accepted frame: \(model.acceptedFrameID.map(String.init) ?? "—")")
+                                Text(model.faces.isEmpty ? "scanning…" : "Vision → canonical → preview")
+                                if let error = model.errorMessage {
+                                    Text(error).foregroundStyle(Color.red)
+                                }
+                            }
+                            Spacer()
+                            LabCameraSwitchButton(
+                                position: model.state.cameraPosition,
+                                enabled: model.state.isRunning
+                            ) {
+                                Task { await model.switchCamera() }
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(10)
                 }
-                .font(.caption2.monospaced())
-                .padding(8)
-                .background(Color.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 6))
-                .foregroundStyle(.white)
-                .padding(8)
             }
             .navigationTitle("Vision Lab")
             .navigationBarTitleDisplayMode(.inline)
             .task { await model.run() }
+        }
+    }
+
+    private var visionReticle: some View {
+        RoundedRectangle(cornerRadius: 8)
+            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [8, 8]))
+            .foregroundStyle(Color.white.opacity(0.25))
+            .padding(44)
+            .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func faceOverlay(mapping: ViewportMapping) -> some View {
+        ForEach(Array(model.faces.enumerated()), id: \.offset) { index, face in
+            if let rect = mapping.viewportRect(from: face) {
+                ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .stroke(Color.yellow, lineWidth: 3)
+                    Text("FACE \(index + 1)")
+                        .font(.caption2.monospaced().weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color.yellow)
+                }
+                .frame(width: rect.width, height: rect.height)
+                .position(x: rect.midX, y: rect.midY)
+                .allowsHitTesting(false)
+            }
         }
     }
 }
@@ -318,6 +494,9 @@ private struct DepthSnapshot: Sendable {
     let colorRotation: CGFloat
     let depthRotation: CGFloat?
     let depthDropped: Bool
+    let gridColumns: Int
+    let gridRows: Int
+    let normalizedDepth: [Float]
 }
 
 @MainActor
@@ -331,37 +510,41 @@ private final class DepthLabModel: ObservableObject {
     )
     @Published private(set) var snapshot: DepthSnapshot?
     @Published private(set) var errorMessage: String?
-    @Published var selectedDeviceID: String?
 
     let devices: [CameraDeviceInfo]
     let camera = CameraCaptureSession(
         sessionPreset: .high,
-        depthConfiguration: CameraDepthCaptureConfiguration()
+        depthConfiguration: CameraDepthCaptureConfiguration(isFilteringEnabled: true)
     )
 
     init() {
         devices = CameraDeviceDiscovery.availableDeviceInfos().filter(\.supportsDepthData)
-        selectedDeviceID = devices.first?.uniqueID
     }
 
-    func runSelectedDevice() async {
-        guard let selectedDeviceID,
-              let device = devices.first(where: { $0.uniqueID == selectedDeviceID }) else {
+    private var initialDevice: CameraDeviceInfo? {
+        devices.first(where: { $0.position == .back }) ?? devices.first
+    }
+
+    func run() async {
+        guard let initialDevice else {
             errorMessage = "No depth-capable camera discovered."
             return
         }
 
         do {
-            state = try await camera.start(request: CameraDeviceRequest(device: device))
+            state = try await camera.start(request: CameraDeviceRequest(device: initialDevice))
             errorMessage = nil
-            guard let stream = camera.synchronizedFrameStream else { return }
+            guard let stream = camera.synchronizedFrameStream else {
+                errorMessage = "Synchronized depth stream is unavailable."
+                return
+            }
             let consumer = Task.detached(priority: .userInitiated) { [weak self] in
                 var iterator = stream.frames.makeAsyncIterator()
                 let clock = ContinuousClock()
                 var lastPublish = clock.now - .seconds(2)
                 while !Task.isCancelled, let frame = await iterator.next() {
                     let now = clock.now
-                    guard lastPublish.duration(to: now) >= .milliseconds(500) else { continue }
+                    guard lastPublish.duration(to: now) >= .milliseconds(250) else { continue }
                     lastPublish = now
                     let value = Self.makeSnapshot(frame)
                     await MainActor.run { [weak self] in self?.snapshot = value }
@@ -374,38 +557,100 @@ private final class DepthLabModel: ObservableObject {
             }
         } catch is CancellationError {
         } catch {
-            errorMessage = error.localizedDescription
+            if !Task.isCancelled { errorMessage = error.localizedDescription }
         }
 
         await camera.stop()
         if !Task.isCancelled { state = camera.currentState }
     }
 
+    func switchCameraPosition() async {
+        let target: CameraPosition = state.cameraPosition == .front ? .back : .front
+        guard let targetDevice = devices.first(where: { $0.position == target }) else {
+            errorMessage = "No depth-capable \(target.rawValue) camera is available."
+            return
+        }
+        await selectDevice(targetDevice)
+    }
+
+    func selectDevice(_ device: CameraDeviceInfo) async {
+        guard state.isRunning else { return }
+        do {
+            state = try await camera.setCamera(CameraDeviceRequest(device: device))
+            snapshot = nil
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    var canSwitchPosition: Bool {
+        let target: CameraPosition = state.cameraPosition == .front ? .back : .front
+        return devices.contains(where: { $0.position == target })
+    }
+
     nonisolated private static func makeSnapshot(_ frame: CameraSynchronizedFrame) -> DepthSnapshot {
         let depth = frame.depth
+        let samples = depth.map(depthGrid) ?? (0, 0, [], nil)
         return DepthSnapshot(
             frameID: frame.color.id.rawValue,
             colorSize: frame.color.geometry.pixelSize,
             depthSize: depth?.geometry.pixelSize,
-            centerDepthMeters: depth.flatMap(centerDepth),
+            centerDepthMeters: samples.3,
             colorRotation: frame.color.geometry.appliedVideoRotationAngle,
             depthRotation: depth?.geometry.appliedVideoRotationAngle,
-            depthDropped: depth == nil
+            depthDropped: depth == nil,
+            gridColumns: samples.0,
+            gridRows: samples.1,
+            normalizedDepth: samples.2
         )
     }
 
-    nonisolated private static func centerDepth(_ frame: CameraDepthFrame) -> Float? {
+    nonisolated private static func depthGrid(
+        _ frame: CameraDepthFrame
+    ) -> (Int, Int, [Float], Float?) {
         let converted = frame.depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
         let map = converted.depthDataMap
         CVPixelBufferLockBaseAddress(map, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
+        guard let base = CVPixelBufferGetBaseAddress(map) else { return (0, 0, [], nil) }
+
         let width = CVPixelBufferGetWidth(map)
         let height = CVPixelBufferGetHeight(map)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(map)
-        let row = base.advanced(by: (height / 2) * bytesPerRow).assumingMemoryBound(to: Float.self)
-        let value = row[width / 2]
-        return value.isFinite ? value : nil
+        let columns = 32
+        let rows = 24
+        let near: Float = 0.2
+        let far: Float = 5.0
+        var values: [Float] = []
+        values.reserveCapacity(columns * rows)
+
+        for gridY in 0..<rows {
+            let sourceY = min(height - 1, gridY * height / rows)
+            let row = base
+                .advanced(by: sourceY * bytesPerRow)
+                .assumingMemoryBound(to: Float.self)
+            for gridX in 0..<columns {
+                let sourceX = min(width - 1, gridX * width / columns)
+                let depth = row[sourceX]
+                if depth.isFinite, depth > 0 {
+                    values.append(min(1, max(0, (depth - near) / (far - near))))
+                } else {
+                    values.append(-1)
+                }
+            }
+        }
+
+        let centerRow = base
+            .advanced(by: (height / 2) * bytesPerRow)
+            .assumingMemoryBound(to: Float.self)
+        let center = centerRow[width / 2]
+        return (
+            columns,
+            rows,
+            values,
+            center.isFinite && center > 0 ? center : nil
+        )
     }
 }
 
@@ -414,44 +659,145 @@ private struct DepthLabView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                Picker("Camera", selection: $model.selectedDeviceID) {
-                    ForEach(model.devices) { device in
-                        Text(device.localizedName).tag(Optional(device.uniqueID))
-                    }
-                }
-                .pickerStyle(.menu)
-                .padding(.horizontal)
+            GeometryReader { proxy in
+                ZStack {
+                    Color.black
+                    LabCameraPreview(
+                        camera: model.camera,
+                        deviceUniqueID: model.state.deviceUniqueID
+                    )
 
-                LabCameraPreview(camera: model.camera, deviceUniqueID: model.state.deviceUniqueID)
-                    .background(Color.black)
-                    .aspectRatio(4 / 3, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .padding(.horizontal)
-
-                if let s = model.snapshot {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("RGB + DEPTH SYNCHRONIZED")
-                            .fontWeight(.bold)
-                        Text("frame \(s.frameID)")
-                        Text("color \(Int(s.colorSize.width)) × \(Int(s.colorSize.height)) • rotation \(s.colorRotation, specifier: "%.1f")°")
-                        Text("depth \(s.depthSize.map { "\(Int($0.width)) × \(Int($0.height))" } ?? "dropped") • rotation \(s.depthRotation.map { String(format: "%.1f°", $0) } ?? "—")")
-                        Text("center depth \(s.centerDepthMeters.map { String(format: "%.3f m", $0) } ?? "—")")
+                    if let snapshot = model.snapshot,
+                       let depthSize = snapshot.depthSize {
+                        DepthHeatmapOverlay(
+                            snapshot: snapshot,
+                            depthSize: depthSize,
+                            viewportSize: proxy.size,
+                            mirrored: model.state.cameraPosition == .front
+                        )
                     }
-                    .font(.caption.monospaced())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                } else {
-                    Text(model.errorMessage ?? "Waiting for synchronized RGB/depth frames…")
-                        .font(.caption)
-                        .foregroundStyle(model.errorMessage == nil ? Color.secondary : Color.red)
+
+                    depthCenterReticle
+
+                    VStack {
+                        HStack(alignment: .top) {
+                            LabHUD(title: "SYNCHRONIZED DEPTH") {
+                                Text(model.state.deviceName ?? "starting depth camera…")
+                                if let snapshot = model.snapshot {
+                                    Text("frame: \(snapshot.frameID)")
+                                    Text("RGB: \(Int(snapshot.colorSize.width)) × \(Int(snapshot.colorSize.height))")
+                                    Text("depth: \(snapshot.depthSize.map { "\(Int($0.width)) × \(Int($0.height))" } ?? "dropped")")
+                                    Text("center: \(snapshot.centerDepthMeters.map { String(format: "%.3f m", $0) } ?? "—")")
+                                    Text("rotation RGB/depth: \(String(format: "%.1f", snapshot.colorRotation))° / \(snapshot.depthRotation.map { String(format: "%.1f°", $0) } ?? "—")")
+                                } else {
+                                    Text("waiting for RGB + depth…")
+                                }
+                                if let error = model.errorMessage {
+                                    Text(error).foregroundStyle(Color.red)
+                                }
+                            }
+                            Spacer()
+                            VStack(spacing: 8) {
+                                LabCameraSwitchButton(
+                                    position: model.state.cameraPosition,
+                                    enabled: model.state.isRunning && model.canSwitchPosition
+                                ) {
+                                    Task { await model.switchCameraPosition() }
+                                }
+                                depthDeviceMenu
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(10)
                 }
-                Spacer()
             }
             .navigationTitle("Depth Lab")
             .navigationBarTitleDisplayMode(.inline)
-            .task(id: model.selectedDeviceID) { await model.runSelectedDevice() }
+            .task { await model.run() }
         }
+    }
+
+    private var depthCenterReticle: some View {
+        ZStack {
+            Circle().stroke(Color.white, lineWidth: 2).frame(width: 30, height: 30)
+            Rectangle().fill(Color.white).frame(width: 42, height: 1)
+            Rectangle().fill(Color.white).frame(width: 1, height: 42)
+        }
+        .shadow(radius: 1)
+        .allowsHitTesting(false)
+    }
+
+    private var depthDeviceMenu: some View {
+        Menu {
+            ForEach(model.devices) { device in
+                Button {
+                    Task { await model.selectDevice(device) }
+                } label: {
+                    HStack {
+                        Text("\(device.position.rawValue.capitalized) · \(device.localizedName)")
+                        if device.uniqueID == model.state.deviceUniqueID {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "camera.aperture")
+                .font(.title3.weight(.semibold))
+                .frame(width: 42, height: 42)
+                .background(Color.black.opacity(0.76), in: Circle())
+                .foregroundStyle(.white)
+        }
+    }
+}
+
+private struct DepthHeatmapOverlay: View {
+    let snapshot: DepthSnapshot
+    let depthSize: CGSize
+    let viewportSize: CGSize
+    let mirrored: Bool
+
+    var body: some View {
+        let mapping = ViewportMapping(
+            imageSize: depthSize,
+            viewportSize: viewportSize,
+            contentMode: .aspectFit,
+            isMirrored: mirrored
+        )
+
+        Canvas { context, _ in
+            guard let imageRect = mapping.imageRect,
+                  snapshot.gridColumns > 0,
+                  snapshot.gridRows > 0,
+                  snapshot.normalizedDepth.count == snapshot.gridColumns * snapshot.gridRows else {
+                return
+            }
+
+            let cellWidth = imageRect.width / CGFloat(snapshot.gridColumns)
+            let cellHeight = imageRect.height / CGFloat(snapshot.gridRows)
+            for row in 0..<snapshot.gridRows {
+                for column in 0..<snapshot.gridColumns {
+                    let value = snapshot.normalizedDepth[row * snapshot.gridColumns + column]
+                    guard value >= 0 else { continue }
+                    let displayColumn = mirrored ? snapshot.gridColumns - 1 - column : column
+                    let rect = CGRect(
+                        x: imageRect.minX + CGFloat(displayColumn) * cellWidth,
+                        y: imageRect.minY + CGFloat(row) * cellHeight,
+                        width: cellWidth + 0.5,
+                        height: cellHeight + 0.5
+                    )
+                    let color = Color(
+                        hue: Double((1 - value) * 0.66),
+                        saturation: 0.9,
+                        brightness: 1,
+                        opacity: 0.46
+                    )
+                    context.fill(Path(rect), with: .color(color))
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -486,7 +832,9 @@ private struct ImageLabView: View {
                     }
 
                     if let errorMessage {
-                        Text(errorMessage).font(.caption).foregroundStyle(.red)
+                        Text(errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(Color.red)
                     }
                 }
                 .padding()
