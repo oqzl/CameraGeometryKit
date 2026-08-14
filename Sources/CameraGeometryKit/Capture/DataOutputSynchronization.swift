@@ -1,0 +1,3 @@
+@preconcurrency import AVFoundation
+
+typealias CameraDataOutputSynchronizerDelegate = AVCaptureDataOutputSynchronizerDelegate
