@@ -118,11 +118,11 @@ final class CameraSampleModel: ObservableObject {
     ) async {
         var iterator = camera.frameStream.frames.makeAsyncIterator()
         let clock = ContinuousClock()
-        var lastPublication = clock.now - .seconds(1)
+        var lastPublication = clock.now - .seconds(2)
 
         while !Task.isCancelled, let frame = await iterator.next() {
             let now = clock.now
-            guard lastPublication.duration(to: now) >= .milliseconds(500) else { continue }
+            guard lastPublication.duration(to: now) >= .seconds(2) else { continue }
             lastPublication = now
 
             let snapshot = FrameHUDSnapshot(
@@ -144,7 +144,8 @@ final class CameraSampleModel: ObservableObject {
         deliveredFrameDiagnostics = snapshot.diagnostics
         frameSummary = "\(snapshot.diagnostics.pixelWidth) × \(snapshot.diagnostics.pixelHeight) px  •  frame \(snapshot.diagnostics.frameID)"
         statistics = snapshot.statistics
-        librarySessionDiagnostics = makeLibrarySessionDiagnostics()
+        // Session/device properties do not need to be re-read for every HUD refresh.
+        // They are refreshed only when the session starts/stops or the camera changes.
     }
 
     private func makeLibrarySessionDiagnostics() -> LibrarySessionDiagnostics? {
