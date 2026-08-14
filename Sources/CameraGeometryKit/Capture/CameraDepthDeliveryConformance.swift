@@ -1,3 +1,3 @@
 @preconcurrency import AVFoundation
 
-extension CameraDepthDelivery: CameraDataOutputSynchronizerDelegate {}
+extension CameraDepthDelivery: AVCaptureDataOutputSynchronizerDelegate {}
