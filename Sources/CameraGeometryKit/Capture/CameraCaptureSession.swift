@@ -73,13 +73,10 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
 
 /// Thin owner of the mutable `AVCaptureSession` graph used by the package.
 ///
-/// Responsibilities are intentionally narrow:
-/// - camera authorization;
-/// - one capability-selected video input at a time;
-/// - bounded color frames and optional synchronized depth;
-/// - `AVCapturePhotoOutput`;
-/// - serialized start/stop and camera switching;
-/// - capture-angle and canonical non-mirroring policy.
+/// The wrapper owns one capability-selected video input, bounded color frames,
+/// optional synchronized depth, photo output, serialized graph mutation,
+/// capture rotation, and canonical non-mirroring. Product recording, effects,
+/// camera chrome, and workflow state remain outside the package.
 public final class CameraCaptureSession: @unchecked Sendable {
     public let captureSession: AVCaptureSession
     public let frameStream: CameraFrameStream
@@ -276,7 +273,6 @@ public final class CameraCaptureSession: @unchecked Sendable {
     private func configureLocked(deviceRequest: CameraDeviceRequest) throws {
         let device = try makeDevice(request: deviceRequest)
         let input = try makeInput(device: device)
-        try configureDepthDeviceIfNeeded(device)
 
         captureSession.beginConfiguration()
         if captureSession.canSetSessionPreset(sessionPreset) {
@@ -288,6 +284,14 @@ public final class CameraCaptureSession: @unchecked Sendable {
             throw CameraCaptureSessionError.cannotAddInput
         }
         captureSession.addInput(input)
+
+        do {
+            try configureDepthDeviceIfNeeded(device)
+        } catch {
+            captureSession.removeInput(input)
+            captureSession.commitConfiguration()
+            throw error
+        }
 
         guard captureSession.canAddOutput(frameStream.output) else {
             captureSession.removeInput(input)
@@ -342,7 +346,6 @@ public final class CameraCaptureSession: @unchecked Sendable {
             updateStateLocked()
             return
         }
-        try configureDepthDeviceIfNeeded(newDevice)
         let newInput = try makeInput(device: newDevice)
 
         captureRotationObservation = nil
@@ -359,8 +362,20 @@ public final class CameraCaptureSession: @unchecked Sendable {
             rebuildCaptureRotationCoordinatorLocked(for: oldDevice)
             throw CameraCaptureSessionError.cannotAddInput
         }
-
         captureSession.addInput(newInput)
+
+        do {
+            try configureDepthDeviceIfNeeded(newDevice)
+        } catch {
+            captureSession.removeInput(newInput)
+            if captureSession.canAddInput(oldInput) {
+                captureSession.addInput(oldInput)
+            }
+            captureSession.commitConfiguration()
+            rebuildCaptureRotationCoordinatorLocked(for: oldDevice)
+            throw error
+        }
+
         captureSession.commitConfiguration()
 
         videoInput = newInput
