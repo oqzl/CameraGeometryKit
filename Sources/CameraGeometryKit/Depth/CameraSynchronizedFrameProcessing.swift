@@ -1,7 +1,7 @@
 import AVFoundation
 
 extension CameraDepthDelivery {
-    public func dataOutputSynchronizer(
+    func dataOutputSynchronizer(
         _ synchronizer: AVCaptureDataOutputSynchronizer,
         didOutput collection: AVCaptureSynchronizedDataCollection
     ) {
