@@ -1,3 +1,1 @@
-@preconcurrency import AVFoundation
-
-typealias CameraDataOutputSynchronizerDelegate = AVCaptureDataOutputSynchronizerDelegate
+// Direct AVFoundation protocol conformance is used by CameraDepthDelivery.
