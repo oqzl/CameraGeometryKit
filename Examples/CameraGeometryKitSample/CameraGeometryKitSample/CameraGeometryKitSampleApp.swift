@@ -514,7 +514,7 @@ private final class DepthLabModel: ObservableObject {
     let devices: [CameraDeviceInfo]
     let camera = CameraCaptureSession(
         sessionPreset: .high,
-        depthConfiguration: CameraDepthCaptureConfiguration(isFilteringEnabled: true)
+        depthConfiguration: CameraDepthCaptureConfiguration(isFilteringEnabled: false)
     )
 
     init() {
@@ -538,13 +538,13 @@ private final class DepthLabModel: ObservableObject {
                 errorMessage = "Synchronized depth stream is unavailable."
                 return
             }
-            let consumer = Task.detached(priority: .userInitiated) { [weak self] in
+            let consumer = Task.detached(priority: .utility) { [weak self] in
                 var iterator = stream.frames.makeAsyncIterator()
                 let clock = ContinuousClock()
                 var lastPublish = clock.now - .seconds(2)
                 while !Task.isCancelled, let frame = await iterator.next() {
                     let now = clock.now
-                    guard lastPublish.duration(to: now) >= .milliseconds(250) else { continue }
+                    guard lastPublish.duration(to: now) >= .seconds(1) else { continue }
                     lastPublish = now
                     let value = Self.makeSnapshot(frame)
                     await MainActor.run { [weak self] in self?.snapshot = value }
@@ -618,8 +618,8 @@ private final class DepthLabModel: ObservableObject {
         let width = CVPixelBufferGetWidth(map)
         let height = CVPixelBufferGetHeight(map)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(map)
-        let columns = 32
-        let rows = 24
+        let columns = 12
+        let rows = 9
         let near: Float = 0.2
         let far: Float = 5.0
         var values: [Float] = []
