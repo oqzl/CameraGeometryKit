@@ -30,25 +30,30 @@ struct CameraSampleView: View {
     @State private var diagnosticsShareItem: DiagnosticsShareItem?
 
     var body: some View {
-        ZStack {
-            CameraPreviewView(
-                camera: model.camera,
-                deviceUniqueID: model.state.deviceUniqueID
-            ) { diagnostics in
-                if previewDiagnostics != diagnostics {
-                    previewDiagnostics = diagnostics
+        GeometryReader { proxy in
+            ZStack {
+                CameraPreviewView(
+                    camera: model.camera,
+                    deviceUniqueID: model.state.deviceUniqueID
+                ) { diagnostics in
+                    if previewDiagnostics != diagnostics {
+                        previewDiagnostics = diagnostics
+                    }
                 }
-            }
-            .background(Color.black)
-            .ignoresSafeArea()
+                .background(Color.black)
+                .ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                statusCard
-                Spacer()
-                controls
+                VStack(spacing: 0) {
+                    statusCard(
+                        availableWidth: proxy.size.width,
+                        maxDiagnosticsHeight: max(140, proxy.size.height - 210)
+                    )
+                    Spacer()
+                    controls
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
         .background(Color.black)
         .task { await model.runSession() }
@@ -70,7 +75,10 @@ struct CameraSampleView: View {
         }
     }
 
-    private var statusCard: some View {
+    private func statusCard(
+        availableWidth: CGFloat,
+        maxDiagnosticsHeight: CGFloat
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label("CameraGeometryKit", systemImage: "camera.viewfinder")
@@ -133,9 +141,9 @@ struct CameraSampleView: View {
                 }
 
                 ScrollView(.vertical, showsIndicators: true) {
-                    diagnosticsContent
+                    diagnosticsContent(availableWidth: availableWidth - 28)
                 }
-                .frame(maxHeight: 560)
+                .frame(maxHeight: maxDiagnosticsHeight)
             }
         }
         .padding(14)
@@ -143,8 +151,17 @@ struct CameraSampleView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private var diagnosticsContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    @ViewBuilder
+    private func diagnosticsContent(availableWidth: CGFloat) -> some View {
+        let useTwoColumns = availableWidth >= 620
+        let columns = useTwoColumns
+            ? [
+                GridItem(.flexible(), spacing: 16, alignment: .top),
+                GridItem(.flexible(), spacing: 16, alignment: .top),
+            ]
+            : [GridItem(.flexible(), spacing: 12, alignment: .top)]
+
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
             diagnosticSection("LIBRARY → APP / SESSION") {
                 diagnosticRow("device type", model.state.deviceTypeRawValue ?? "—")
                 diagnosticRow("depth enabled", boolText(model.state.depthCaptureEnabled))
@@ -199,6 +216,7 @@ struct CameraSampleView: View {
                 .font(.caption2.monospaced().weight(.bold))
             content()
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func diagnosticRow(_ label: String, _ value: String) -> some View {
@@ -206,7 +224,10 @@ struct CameraSampleView: View {
             Text(label)
                 .frame(width: 112, alignment: .leading)
                 .foregroundStyle(.secondary)
-            Text(value).textSelection(.enabled)
+            Text(value)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
             Spacer(minLength: 0)
         }
         .font(.caption2.monospaced())
@@ -242,46 +263,46 @@ struct CameraSampleView: View {
             "capturedAt": ISO8601DateFormatter().string(from: Date()),
             "libraryToApp": [
                 "session": [
-                    "deviceName": model.state.deviceName ?? NSNull(),
-                    "deviceType": model.state.deviceTypeRawValue ?? NSNull(),
+                    "deviceName": jsonValue(model.state.deviceName),
+                    "deviceType": jsonValue(model.state.deviceTypeRawValue),
                     "cameraPosition": model.state.cameraPosition.rawValue,
                     "depthEnabled": model.state.depthCaptureEnabled,
                     "activeFormat": [
-                        "width": session?.activeFormatWidth ?? NSNull(),
-                        "height": session?.activeFormatHeight ?? NSNull(),
+                        "width": jsonValue(session?.activeFormatWidth),
+                        "height": jsonValue(session?.activeFormatHeight),
                     ],
                     "analysisConnection": [
-                        "rotationAngle": session?.analysisConnectionRotationAngle ?? NSNull(),
-                        "mirrored": session?.analysisMirrored ?? NSNull(),
+                        "rotationAngle": jsonValue(session?.analysisConnectionRotationAngle),
+                        "mirrored": jsonValue(session?.analysisMirrored),
                     ],
                     "photoConnection": [
-                        "rotationAngle": session?.photoConnectionRotationAngle ?? NSNull(),
-                        "mirrored": session?.photoMirrored ?? NSNull(),
+                        "rotationAngle": jsonValue(session?.photoConnectionRotationAngle),
+                        "mirrored": jsonValue(session?.photoMirrored),
                     ],
                 ],
                 "frame": [
-                    "id": frame?.frameID ?? NSNull(),
-                    "cameraPosition": frame?.cameraPosition.rawValue ?? NSNull(),
-                    "pixelWidth": frame?.pixelWidth ?? NSNull(),
-                    "pixelHeight": frame?.pixelHeight ?? NSNull(),
-                    "appliedVideoRotationAngle": frame?.appliedVideoRotationAngle ?? NSNull(),
-                    "mirrored": frame?.isMirrored ?? NSNull(),
+                    "id": jsonValue(frame?.frameID),
+                    "cameraPosition": jsonValue(frame?.cameraPosition.rawValue),
+                    "pixelWidth": jsonValue(frame?.pixelWidth),
+                    "pixelHeight": jsonValue(frame?.pixelHeight),
+                    "appliedVideoRotationAngle": jsonValue(frame?.appliedVideoRotationAngle),
+                    "mirrored": jsonValue(frame?.isMirrored),
                 ],
                 "previewRotation": [
-                    "requestedPreviewAngle": preview?.libraryPreviewRotationAngle ?? NSNull(),
-                    "requestedCaptureAngle": preview?.libraryCaptureRotationAngle ?? NSNull(),
+                    "requestedPreviewAngle": jsonValue(preview?.libraryPreviewRotationAngle),
+                    "requestedCaptureAngle": jsonValue(preview?.libraryCaptureRotationAngle),
                 ],
             ],
             "app": [
                 "deviceOrientation": deviceOrientationText(deviceOrientation),
                 "interfaceOrientation": interfaceOrientationText(interfaceOrientation),
                 "preview": [
-                    "boundsWidth": preview?.boundsWidth ?? NSNull(),
-                    "boundsHeight": preview?.boundsHeight ?? NSNull(),
-                    "videoGravity": preview?.videoGravity ?? NSNull(),
-                    "actualConnectionRotationAngle": preview?.connectionRotationAngle ?? NSNull(),
-                    "mirrored": preview?.connectionMirrored ?? NSNull(),
-                    "layerTransform": preview?.layerTransform ?? NSNull(),
+                    "boundsWidth": jsonValue(preview?.boundsWidth),
+                    "boundsHeight": jsonValue(preview?.boundsHeight),
+                    "videoGravity": jsonValue(preview?.videoGravity),
+                    "actualConnectionRotationAngle": jsonValue(preview?.connectionRotationAngle),
+                    "mirrored": jsonValue(preview?.connectionMirrored),
+                    "layerTransform": jsonValue(preview?.layerTransform),
                 ],
             ],
             "statistics": [
@@ -290,6 +311,11 @@ struct CameraSampleView: View {
                 "replacedInLatestBuffer": model.statistics.replacedInLatestBuffer,
             ],
         ]
+    }
+
+    private func jsonValue<T>(_ value: T?) -> Any {
+        guard let value else { return NSNull() }
+        return value
     }
 
     private func diagnosticsJSONData() -> Data? {
