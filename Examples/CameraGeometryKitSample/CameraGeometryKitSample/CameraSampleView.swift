@@ -544,8 +544,8 @@ private final class PreviewContainerView: UIView {
         if previewLayer.session !== camera.captureSession {
             previewLayer.session = camera.captureSession
         }
-        if previewLayer.videoGravity != .resizeAspectFill {
-            previewLayer.videoGravity = .resizeAspectFill
+        if previewLayer.videoGravity != .resizeAspect {
+            previewLayer.videoGravity = .resizeAspect
         }
 
         if observedDeviceUniqueID != deviceUniqueID || cameraRotation == nil {
