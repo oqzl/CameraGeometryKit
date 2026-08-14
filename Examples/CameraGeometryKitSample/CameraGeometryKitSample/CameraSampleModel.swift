@@ -148,6 +148,7 @@ final class CameraSampleModel: ObservableObject {
         deliveredFrameDiagnostics = snapshot.diagnostics
         frameSummary = "\(snapshot.diagnostics.pixelWidth) × \(snapshot.diagnostics.pixelHeight) px  •  frame \(snapshot.diagnostics.frameID)"
         statistics = snapshot.statistics
+        librarySessionDiagnostics = makeLibrarySessionDiagnostics()
     }
 
     private func makeLibrarySessionDiagnostics() -> LibrarySessionDiagnostics? {
