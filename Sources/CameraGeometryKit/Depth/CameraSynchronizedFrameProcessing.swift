@@ -1,3 +1,8 @@
 import AVFoundation
 
-extension CameraSynchronizedFrameStream {}
+extension CameraDepthDelivery {
+    public func dataOutputSynchronizer(
+        _ synchronizer: AVCaptureDataOutputSynchronizer,
+        didOutput collection: AVCaptureSynchronizedDataCollection
+    ) {}
+}
