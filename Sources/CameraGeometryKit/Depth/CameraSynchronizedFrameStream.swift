@@ -1,10 +1,10 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-public final class CameraDepthDelivery: NSObject, @unchecked Sendable {
-    public let videoOutput: AVCaptureVideoDataOutput
-    public let depthOutput: AVCaptureDepthDataOutput
-    public let frames: AsyncStream<CameraSynchronizedFrame>
+final class CameraDepthDelivery: NSObject, @unchecked Sendable {
+    let videoOutput: AVCaptureVideoDataOutput
+    let depthOutput: AVCaptureDepthDataOutput
+    let frames: AsyncStream<CameraSynchronizedFrame>
 
     let callbackQueue: DispatchQueue
     let lock = NSLock()
@@ -13,8 +13,8 @@ public final class CameraDepthDelivery: NSObject, @unchecked Sendable {
     var cameraPosition: CameraPosition = .unspecified
     var sequence: UInt64 = 0
 
-    public init(
-        configuration: CameraDepthCaptureConfiguration = CameraDepthCaptureConfiguration(),
+    init(
+        configuration: CameraDepthCaptureConfiguration,
         queueLabel: String = "net.oqzl.CameraGeometryKit.depth-frames"
     ) {
         videoOutput = AVCaptureVideoDataOutput()
