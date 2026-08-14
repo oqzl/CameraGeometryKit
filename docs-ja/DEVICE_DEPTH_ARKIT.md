@@ -33,11 +33,44 @@ let request = CameraDeviceRequest(
 
 `CameraCaptureSession.activeCaptureDevice` は focus、exposure、zoom など通常の device configuration に使えます。capture graph の変更は `CameraCaptureSession` が所有します。
 
-## Depth geometry
+## Synchronized depth capture
 
-0.1.1 では `CameraDepthFrameGeometry`、`CameraDepthFrame`、`CameraSynchronizedFrame` を追加し、depth-aware pipeline で使う型付き geometry / identity の語彙を用意します。また device/session metadata に `supportsDepthData` を追加します。
+0.1.1 では `CameraDepthFrameGeometry`、`CameraDepthFrame`、`CameraSynchronizedFrame` に加え、`AVCaptureDepthDataOutput` と video output の同期 capture を扱います。
 
-`AVCaptureDepthDataOutput` の構成と RGB/depth synchronization 自体はまだ package が所有しません。アプリの video resolution / FPS policy を暗黙に変更しない設計で `AVCaptureDataOutputSynchronizer` を統合することを near-term item とします。
+Depth は opt-in です。
+
+```swift
+let camera = CameraCaptureSession(
+    depthConfiguration: CameraDepthCaptureConfiguration()
+)
+
+try await camera.start(
+    request: CameraDeviceRequest(
+        position: .front,
+        preferredDeviceTypes: [
+            .builtInTrueDepthCamera,
+            .builtInWideAngleCamera,
+        ]
+    )
+)
+
+if let stream = camera.synchronizedFrameStream {
+    for await frame in stream.frames {
+        let color = frame.color
+        let depth = frame.depth
+    }
+}
+```
+
+Depth 有効時は `AVCaptureDataOutputSynchronizer` で同時刻の video / depth sample を一つの callback にまとめます。Depth sample だけ drop した場合は `CameraSynchronizedFrame.depth == nil` とし、color frame は有効なまま `CameraFrameID` を保持します。
+
+Session は color 側の video format を勝手に変更しません。指定された `sessionPreset` で device の active video format を確定したあと、その `supportedDepthDataFormats` から要求された depth data type のうち最大解像度を選びます。現在の active video format で要求した depth type が利用できなければ明示的に configuration error にします。
+
+既定の depth type 優先順は `DepthFloat32`、`DepthFloat16` です。Filtering は既定で off で、`CameraDepthCaptureConfiguration` から変更できます。
+
+通常の video-only mode では従来どおり `camera.frameStream.frames` を使います。Depth mode では `camera.synchronizedFrameStream?.frames` を color/depth analysis の source にします。
+
+Video と depth の connection には同じ capture rotation と canonical non-mirroring policy を適用します。ただし RGB と depth の pixel dimensions は一致するとは限らないため、各 frame の geometry metadata を使います。
 
 ## ARKit adapter
 
