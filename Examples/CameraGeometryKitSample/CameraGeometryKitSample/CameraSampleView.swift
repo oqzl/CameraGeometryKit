@@ -15,6 +15,16 @@ private struct AppPreviewDiagnostics: Equatable {
     let layerTransform: String
 }
 
+@MainActor
+private final class PreviewDiagnosticsStore: ObservableObject {
+    @Published private(set) var snapshot: AppPreviewDiagnostics?
+
+    func publish(_ snapshot: AppPreviewDiagnostics) {
+        guard self.snapshot != snapshot else { return }
+        self.snapshot = snapshot
+    }
+}
+
 private struct DiagnosticsShareItem: Identifiable {
     let id = UUID()
     let url: URL
@@ -22,46 +32,84 @@ private struct DiagnosticsShareItem: Identifiable {
 
 @MainActor
 struct CameraSampleView: View {
-    @StateObject private var model = CameraSampleModel()
+    @State private var camera = CameraCaptureSession(sessionPreset: .high)
+    @State private var previewDiagnosticsStore = PreviewDiagnosticsStore()
+    @State private var activeDeviceUniqueID: String?
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                CameraPreviewView(
+                    camera: camera,
+                    deviceUniqueID: activeDeviceUniqueID,
+                    diagnosticsStore: previewDiagnosticsStore
+                )
+                .background(Color.black)
+                .ignoresSafeArea()
+
+                CameraSampleOverlay(
+                    camera: camera,
+                    previewDiagnosticsStore: previewDiagnosticsStore,
+                    availableSize: proxy.size
+                ) { uniqueID in
+                    if activeDeviceUniqueID != uniqueID {
+                        activeDeviceUniqueID = uniqueID
+                    }
+                }
+            }
+        }
+        .background(Color.black)
+    }
+}
+
+@MainActor
+private struct CameraSampleOverlay: View {
+    @StateObject private var model: CameraSampleModel
+    @ObservedObject private var previewDiagnosticsStore: PreviewDiagnosticsStore
+
+    let availableSize: CGSize
+    let onDeviceUniqueIDChanged: (String?) -> Void
+
     @State private var isDiagnosticsExpanded = false
-    @State private var previewDiagnostics: AppPreviewDiagnostics?
     @State private var deviceOrientation = UIDevice.current.orientation
     @State private var interfaceOrientation: UIInterfaceOrientation = .unknown
     @State private var diagnosticsShareItem: DiagnosticsShareItem?
 
+    init(
+        camera: CameraCaptureSession,
+        previewDiagnosticsStore: PreviewDiagnosticsStore,
+        availableSize: CGSize,
+        onDeviceUniqueIDChanged: @escaping (String?) -> Void
+    ) {
+        _model = StateObject(wrappedValue: CameraSampleModel(camera: camera))
+        _previewDiagnosticsStore = ObservedObject(wrappedValue: previewDiagnosticsStore)
+        self.availableSize = availableSize
+        self.onDeviceUniqueIDChanged = onDeviceUniqueIDChanged
+    }
+
     var body: some View {
-        GeometryReader { proxy in
-            let isLandscapeHUD = proxy.size.width > proxy.size.height
+        let isLandscapeHUD = availableSize.width > availableSize.height
 
-            ZStack {
-                CameraPreviewView(
-                    camera: model.camera,
-                    deviceUniqueID: model.state.deviceUniqueID
-                ) { diagnostics in
-                    if previewDiagnostics != diagnostics {
-                        previewDiagnostics = diagnostics
-                    }
-                }
-                .background(Color.black)
-                .ignoresSafeArea()
-
-                VStack(spacing: 0) {
-                    statusCard(
-                        availableWidth: proxy.size.width,
-                        maxDiagnosticsHeight: max(140, proxy.size.height - (isLandscapeHUD ? 145 : 210)),
-                        compactHeader: isLandscapeHUD
-                    )
-                    Spacer()
-                    controls
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
+        VStack(spacing: 0) {
+            statusCard(
+                availableWidth: availableSize.width,
+                maxDiagnosticsHeight: max(
+                    140,
+                    availableSize.height - (isLandscapeHUD ? 145 : 210)
+                ),
+                compactHeader: isLandscapeHUD
+            )
+            Spacer()
+            controls
         }
-        .background(Color.black)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .task { await model.runSession() }
         .task(id: model.requestedPosition) {
             await model.switchCamera(to: model.requestedPosition)
+        }
+        .onChange(of: model.state.deviceUniqueID, initial: true) { _, uniqueID in
+            onDeviceUniqueIDChanged(uniqueID)
         }
         .onAppear {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
@@ -106,16 +154,18 @@ struct CameraSampleView: View {
                     Text(model.state.deviceName ?? "カメラを起動しています…")
                         .font(.caption.weight(.medium))
                         .lineLimit(1)
-                    Text("•")
-                        .foregroundStyle(.tertiary)
+                    Text("•").foregroundStyle(.tertiary)
                     Text(model.frameSummary)
                         .font(.caption.monospacedDigit())
                         .lineLimit(1)
-                    Text("•")
-                        .foregroundStyle(.tertiary)
-                    Text("d \(model.statistics.deliveredFrames)  drop \(model.statistics.droppedByAVFoundation)  repl \(model.statistics.replacedInLatestBuffer)")
-                        .font(.caption.monospacedDigit())
-                        .lineLimit(1)
+                    Text("•").foregroundStyle(.tertiary)
+                    Text(
+                        "d \(model.statistics.deliveredFrames)  " +
+                        "drop \(model.statistics.droppedByAVFoundation)  " +
+                        "repl \(model.statistics.replacedInLatestBuffer)"
+                    )
+                    .font(.caption.monospacedDigit())
+                    .lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(.secondary)
@@ -129,9 +179,13 @@ struct CameraSampleView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
 
-                Text("delivered \(model.statistics.deliveredFrames)  •  dropped \(model.statistics.droppedByAVFoundation)  •  replaced \(model.statistics.replacedInLatestBuffer)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                Text(
+                    "delivered \(model.statistics.deliveredFrames)  •  " +
+                    "dropped \(model.statistics.droppedByAVFoundation)  •  " +
+                    "replaced \(model.statistics.replacedInLatestBuffer)"
+                )
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
             }
 
             if let errorMessage = model.errorMessage {
@@ -172,8 +226,11 @@ struct CameraSampleView: View {
             }
         }
         .padding(14)
-        .foregroundStyle(.primary)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .foregroundStyle(.white)
+        .background(
+            Color.black.opacity(0.82),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
     }
 
     @ViewBuilder
@@ -232,6 +289,10 @@ struct CameraSampleView: View {
         .padding(.bottom, 2)
     }
 
+    private var previewDiagnostics: AppPreviewDiagnostics? {
+        previewDiagnosticsStore.snapshot
+    }
+
     private func diagnosticSection<Content: View>(
         _ title: String,
         @ViewBuilder content: () -> Content
@@ -248,7 +309,7 @@ struct CameraSampleView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
                 .frame(width: 112, alignment: .leading)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.72))
             Text(value)
                 .textSelection(.enabled)
                 .lineLimit(1)
@@ -362,7 +423,9 @@ struct CameraSampleView: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("CameraGeometryKit-diagnostics-\(formatter.string(from: Date())).json")
+            .appendingPathComponent(
+                "CameraGeometryKit-diagnostics-\(formatter.string(from: Date())).json"
+            )
         do {
             try data.write(to: url, options: .atomic)
             diagnosticsShareItem = DiagnosticsShareItem(url: url)
@@ -433,17 +496,24 @@ struct CameraSampleView: View {
 private struct CameraPreviewView: UIViewRepresentable {
     let camera: CameraCaptureSession
     let deviceUniqueID: String?
-    let onDiagnostics: @MainActor (AppPreviewDiagnostics) -> Void
+    let diagnosticsStore: PreviewDiagnosticsStore
 
     func makeUIView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
-        view.onDiagnostics = onDiagnostics
+        view.update(
+            camera: camera,
+            deviceUniqueID: deviceUniqueID,
+            diagnosticsStore: diagnosticsStore
+        )
         return view
     }
 
     func updateUIView(_ view: PreviewContainerView, context: Context) {
-        view.onDiagnostics = onDiagnostics
-        view.update(camera: camera, deviceUniqueID: deviceUniqueID)
+        view.update(
+            camera: camera,
+            deviceUniqueID: deviceUniqueID,
+            diagnosticsStore: diagnosticsStore
+        )
     }
 }
 
@@ -451,8 +521,7 @@ private struct CameraPreviewView: UIViewRepresentable {
 private final class PreviewContainerView: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
-    var onDiagnostics: (@MainActor (AppPreviewDiagnostics) -> Void)?
-
+    private weak var diagnosticsStore: PreviewDiagnosticsStore?
     private var cameraRotation: CameraRotation?
     private var latestLibraryRotation: CameraRotationSnapshot?
     private var observedDeviceUniqueID: String?
@@ -465,7 +534,13 @@ private final class PreviewContainerView: UIView {
         return layer
     }
 
-    func update(camera: CameraCaptureSession, deviceUniqueID: String?) {
+    func update(
+        camera: CameraCaptureSession,
+        deviceUniqueID: String?,
+        diagnosticsStore: PreviewDiagnosticsStore
+    ) {
+        self.diagnosticsStore = diagnosticsStore
+
         if previewLayer.session !== camera.captureSession {
             previewLayer.session = camera.captureSession
         }
@@ -529,7 +604,7 @@ private final class PreviewContainerView: UIView {
 
         guard snapshot != lastPublishedDiagnostics else { return }
         lastPublishedDiagnostics = snapshot
-        onDiagnostics?(snapshot)
+        diagnosticsStore?.publish(snapshot)
     }
 }
 
