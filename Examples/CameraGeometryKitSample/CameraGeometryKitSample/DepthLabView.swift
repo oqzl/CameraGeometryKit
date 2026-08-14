@@ -1,5 +1,7 @@
+import AVFoundation
 import CameraGeometryKit
 import CoreVideo
+import Foundation
 import SwiftUI
 
 struct DepthSnapshot: Sendable {
@@ -28,12 +30,21 @@ final class DepthLabModel: ObservableObject {
 
     let devices: [CameraDeviceInfo]
     let camera = CameraCaptureSession(
-        sessionPreset: .high,
+        sessionPreset: .inputPriority,
         depthConfiguration: CameraDepthCaptureConfiguration(isFilteringEnabled: false)
     )
 
     init() {
-        devices = CameraDeviceDiscovery.availableDeviceInfos().filter(\.supportsDepthData)
+        devices = CameraDeviceDiscovery.availableDeviceInfos().filter { info in
+            guard info.supportsDepthData,
+                  let device = AVCaptureDevice(uniqueID: info.uniqueID) else {
+                return false
+            }
+            return device.activeFormat.supportedDepthDataFormats.contains { format in
+                let type = CMFormatDescriptionGetMediaSubType(format.formatDescription)
+                return type == kCVPixelFormatType_DepthFloat32 || type == kCVPixelFormatType_DepthFloat16
+            }
+        }
     }
 
     private var initialDevice: CameraDeviceInfo? {
@@ -42,7 +53,7 @@ final class DepthLabModel: ObservableObject {
 
     func run() async {
         guard let initialDevice else {
-            errorMessage = "No depth-capable camera discovered."
+            errorMessage = "No camera has a DepthFloat16/32 format compatible with its active video format."
             return
         }
 
@@ -85,7 +96,7 @@ final class DepthLabModel: ObservableObject {
     func switchCameraPosition() async {
         let target: CameraPosition = state.cameraPosition == .front ? .back : .front
         guard let targetDevice = devices.first(where: { $0.position == target }) else {
-            errorMessage = "No depth-capable \(target.rawValue) camera is available."
+            errorMessage = "No active-format-compatible depth camera is available at \(target.rawValue)."
             return
         }
         await selectDevice(targetDevice)
@@ -195,6 +206,7 @@ struct DepthLabView: View {
                         HStack(alignment: .top) {
                             LabHUD("SYNCHRONIZED DEPTH") {
                                 Text(model.state.deviceName ?? "starting depth camera…")
+                                Text("compatible devices: \(model.devices.count)")
                                 if let snapshot = model.snapshot {
                                     Text("frame: \(snapshot.frameID)")
                                     Text("RGB: \(Int(snapshot.colorSize.width)) × \(Int(snapshot.colorSize.height))")
