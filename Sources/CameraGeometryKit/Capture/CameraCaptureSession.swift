@@ -8,7 +8,10 @@ public enum CameraCaptureSessionError: Error, LocalizedError, Sendable {
     case cannotCreateInput(String)
     case cannotAddInput
     case cannotAddFrameOutput
+    case cannotAddDepthOutput
     case cannotAddPhotoOutput
+    case depthUnavailableForActiveFormat(CameraPosition)
+    case cannotConfigureDepth(String)
     case notConfigured
 
     public var errorDescription: String? {
@@ -23,8 +26,14 @@ public enum CameraCaptureSessionError: Error, LocalizedError, Sendable {
             return "The capture session cannot add the selected camera input."
         case .cannotAddFrameOutput:
             return "The capture session cannot add the video frame output."
+        case .cannotAddDepthOutput:
+            return "The capture session cannot add the depth output."
         case .cannotAddPhotoOutput:
             return "The capture session cannot add the photo output."
+        case .depthUnavailableForActiveFormat(let position):
+            return "The active video format does not provide a requested depth format for \(position.rawValue) camera."
+        case .cannotConfigureDepth(let message):
+            return "Could not configure depth capture: \(message)"
         case .notConfigured:
             return "The capture session has not been configured."
         }
@@ -39,6 +48,7 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
     public let deviceName: String?
     public let deviceTypeRawValue: String?
     public let supportsDepthData: Bool
+    public let depthCaptureEnabled: Bool
 
     public init(
         isConfigured: Bool,
@@ -47,7 +57,8 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
         deviceUniqueID: String?,
         deviceName: String?,
         deviceTypeRawValue: String? = nil,
-        supportsDepthData: Bool = false
+        supportsDepthData: Bool = false,
+        depthCaptureEnabled: Bool = false
     ) {
         self.isConfigured = isConfigured
         self.isRunning = isRunning
@@ -56,6 +67,7 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
         self.deviceName = deviceName
         self.deviceTypeRawValue = deviceTypeRawValue
         self.supportsDepthData = supportsDepthData
+        self.depthCaptureEnabled = depthCaptureEnabled
     }
 }
 
@@ -64,22 +76,24 @@ public struct CameraCaptureSessionState: Sendable, Hashable {
 /// Responsibilities are intentionally narrow:
 /// - camera authorization;
 /// - one capability-selected video input at a time;
-/// - `CameraFrameStream.output`;
+/// - bounded color frames and optional synchronized depth;
 /// - `AVCapturePhotoOutput`;
 /// - serialized start/stop and camera switching;
-/// - capture-angle and canonical non-mirroring policy for frame/photo outputs.
-///
-/// The exposed `captureSession` exists so apps can attach an
-/// `AVCaptureVideoPreviewLayer`. Do not mutate inputs, outputs, or running state
-/// through it; use this wrapper so session mutation stays serialized.
+/// - capture-angle and canonical non-mirroring policy.
 public final class CameraCaptureSession: @unchecked Sendable {
     public let captureSession: AVCaptureSession
     public let frameStream: CameraFrameStream
     public let photoOutput: AVCapturePhotoOutput
 
+    public var depthOutput: AVCaptureDepthDataOutput? {
+        depthSynchronizer?.depthOutput
+    }
+
     private let sessionPreset: AVCaptureSession.Preset
     private let sessionQueue: DispatchQueue
     private let stateLock = NSLock()
+    private let depthConfiguration: CameraDepthConfiguration?
+    private let depthSynchronizer: CameraDepthSynchronizer?
 
     private var videoInput: AVCaptureDeviceInput?
     private var activeDevice: AVCaptureDevice?
@@ -101,12 +115,17 @@ public final class CameraCaptureSession: @unchecked Sendable {
     public init(
         sessionPreset: AVCaptureSession.Preset = .photo,
         frameStream: CameraFrameStream = CameraFrameStream(),
+        depthConfiguration: CameraDepthConfiguration? = nil,
         queueLabel: String = "net.oqzl.CameraGeometryKit.session"
     ) {
         captureSession = AVCaptureSession()
         photoOutput = AVCapturePhotoOutput()
         self.sessionPreset = sessionPreset
         self.frameStream = frameStream
+        self.depthConfiguration = depthConfiguration
+        depthSynchronizer = depthConfiguration.map {
+            CameraDepthSynchronizer(frameStream: frameStream, configuration: $0)
+        }
         sessionQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
     }
 
@@ -114,17 +133,11 @@ public final class CameraCaptureSession: @unchecked Sendable {
         stateLock.withLock { stateStorage }
     }
 
-    /// Starts with the default built-in wide-angle camera for the requested
-    /// position. Use `start(deviceRequest:)` when a product prefers TrueDepth,
-    /// ultra-wide, LiDAR, or another AVFoundation device type.
     @discardableResult
     public func start(position: CameraPosition = .back) async throws -> CameraCaptureSessionState {
         try await start(deviceRequest: .wideAngle(position: position))
     }
 
-    /// Requests camera authorization if necessary, resolves the requested
-    /// device through `AVCaptureDevice.DiscoverySession`, configures the minimal
-    /// capture graph, and starts the session off the main thread.
     @discardableResult
     public func start(deviceRequest: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
         guard await Self.cameraAccessGranted() else {
@@ -166,8 +179,6 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
-    /// Keeps the current device-type preference order while moving to the
-    /// requested front/back position.
     @discardableResult
     public func setCameraPosition(_ position: CameraPosition) async throws -> CameraCaptureSessionState {
         try await withCheckedThrowingContinuation { continuation in
@@ -187,7 +198,6 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
-    /// Selects a physical camera by capability and preference order.
     @discardableResult
     public func setDevice(_ request: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
         try await withCheckedThrowingContinuation { continuation in
@@ -225,9 +235,6 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
-    /// Re-resolves and reapplies the current capture angle immediately before a
-    /// photo request. `photoOutput` remains public so the app can own photo
-    /// settings and delegate/result policy without duplicating session geometry.
     public func preparePhotoCapture() async throws {
         try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async { [self] in
@@ -243,8 +250,6 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
-    /// Creates the preview-side rotation owner for the currently active device.
-    /// Recreate it after `setCameraPosition`, `setDevice`, or `switchCamera`.
     @MainActor
     public func makePreviewRotation(previewLayer: CALayer? = nil) -> CameraRotation? {
         guard let device = stateLock.withLock({ activeDeviceForPreview }) else { return nil }
@@ -271,6 +276,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
     private func configureLocked(deviceRequest: CameraDeviceRequest) throws {
         let device = try makeDevice(request: deviceRequest)
         let input = try makeInput(device: device)
+        try configureDepthDeviceIfNeeded(device)
 
         captureSession.beginConfiguration()
         if captureSession.canSetSessionPreset(sessionPreset) {
@@ -290,7 +296,21 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
         captureSession.addOutput(frameStream.output)
 
+        if let depthOutput {
+            guard captureSession.canAddOutput(depthOutput) else {
+                captureSession.removeOutput(frameStream.output)
+                captureSession.removeInput(input)
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddDepthOutput
+            }
+            captureSession.addOutput(depthOutput)
+            depthOutput.connection(with: .depthData)?.isEnabled = true
+        }
+
         guard captureSession.canAddOutput(photoOutput) else {
+            if let depthOutput {
+                captureSession.removeOutput(depthOutput)
+            }
             captureSession.removeOutput(frameStream.output)
             captureSession.removeInput(input)
             captureSession.commitConfiguration()
@@ -322,6 +342,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
             updateStateLocked()
             return
         }
+        try configureDepthDeviceIfNeeded(newDevice)
         let newInput = try makeInput(device: newDevice)
 
         captureRotationObservation = nil
@@ -365,6 +386,23 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
+    private func configureDepthDeviceIfNeeded(_ device: AVCaptureDevice) throws {
+        guard let depthConfiguration else { return }
+        guard let depthFormat = depthConfiguration.preferredFormat(for: device) else {
+            throw CameraCaptureSessionError.depthUnavailableForActiveFormat(
+                CameraPosition(device.position)
+            )
+        }
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            device.activeDepthDataFormat = depthFormat
+        } catch {
+            throw CameraCaptureSessionError.cannotConfigureDepth(error.localizedDescription)
+        }
+    }
+
     private func rebuildCaptureRotationCoordinatorLocked(for device: AVCaptureDevice) {
         captureRotationObservation = nil
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
@@ -394,6 +432,12 @@ public final class CameraCaptureSession: @unchecked Sendable {
             }
             CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: connection)
         }
+        if let connection = depthOutput?.connection(with: .depthData) {
+            if connection.isVideoRotationAngleSupported(captureAngle) {
+                connection.videoRotationAngle = captureAngle
+            }
+            CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: connection)
+        }
         applyPhotoConnectionLocked(captureAngle: captureAngle)
     }
 
@@ -417,7 +461,8 @@ public final class CameraCaptureSession: @unchecked Sendable {
             deviceUniqueID: device?.uniqueID,
             deviceName: device?.localizedName,
             deviceTypeRawValue: device?.deviceType.rawValue,
-            supportsDepthData: device?.formats.contains { !$0.supportedDepthDataFormats.isEmpty } ?? false
+            supportsDepthData: device?.formats.contains { !$0.supportedDepthDataFormats.isEmpty } ?? false,
+            depthCaptureEnabled: depthConfiguration != nil
         )
         stateLock.withLock {
             activeDeviceForPreview = device
