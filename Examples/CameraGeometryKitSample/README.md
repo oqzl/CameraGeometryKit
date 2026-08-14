@@ -4,6 +4,18 @@ This is a small iOS 18+ Swift 6 app that demonstrates the package's camera
 session wrapper, preview rotation, canonical non-mirrored analysis stream, and
 latest-frame statistics.
 
+The sample uses `AVLayerVideoGravity.resizeAspect` (fit). For geometry and rotation validation, fit is recommended over fill because fill introduces cropping. The library itself does not force a `videoGravity` policy.
+
+## Preview rotation
+
+Normal apps do not need to combine `CameraRotation.observe()` with repeated `applyPreviewAngle(to:)` calls.
+
+```swift
+previewRotationBinding = camera.bindPreviewRotation(to: previewLayer)
+```
+
+`CameraPreviewRotationBinding` applies the initial preview angle from `AVCaptureDevice.RotationCoordinator` and automatically reapplies later angle changes to the PreviewLayer connection. Create a new binding after switching to a different physical camera.
+
 ## Orientation diagnostics HUD
 
 Use the chevron at the right edge of the top status card to expand the diagnostics HUD downward.
@@ -12,12 +24,12 @@ The HUD separates values by where they cross the library/app boundary:
 
 - `LIBRARY → APP / SESSION`: public `CameraCaptureSession` state plus actual analysis/photo connection values
 - `LIBRARY → APP / FRAME`: pixel size, rotation, and mirroring actually delivered to the app in `CameraFrameGeometry`
-- `LIBRARY → APP / PREVIEW`: preview/capture angles returned to the app by CameraGeometryKit's `CameraRotation`
+- `LIBRARY → APP / PREVIEW`: preview/capture angles used by `CameraPreviewRotationBinding`
 - `APP / PREVIEW + UI`: `UIDeviceOrientation`, `UIInterfaceOrientation`, PreviewLayer bounds/gravity, and the PreviewLayer connection's actual rotation/mirroring/transform
 
-For example, if `requested preview` is `90°` while `preview actual` is `0°`, the mismatch is at the boundary where the sample app should apply the value supplied by the library. If `requested preview` itself is unexpected, investigate the library-side rotation source instead.
+In the normal state, `requested preview` and `preview actual` should match. A mismatch points to the binding / PreviewLayer connection boundary. If `requested preview` itself is unexpected, investigate the library-side RotationCoordinator source.
 
-The diagnostics HUD does not correct orientation. It intentionally adds no `rotationEffect` or compensating transform and reports the actual connection values as observed. When device orientation changes, the same key values are logged once to the console with the `[OrientationDebug]` prefix.
+The HUD adds no independent `rotationEffect` or compensating transform. `CameraPreviewRotationBinding` owns preview rotation application; the HUD only observes requested versus actual values. When device orientation changes, the same key values are logged once to the console with the `[OrientationDebug]` prefix.
 
 ## Build
 
