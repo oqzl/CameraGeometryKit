@@ -211,27 +211,51 @@ public final class CameraCaptureSession: @unchecked Sendable {
         let device = try makeDevice(request: request)
         let input = try makeInput(device: device)
 
-        captureSession.beginConfiguration()
-        if captureSession.canSetSessionPreset(sessionPreset) { captureSession.sessionPreset = sessionPreset }
-        guard captureSession.canAddInput(input) else {
+        if synchronizedFrameStream == nil {
+            captureSession.beginConfiguration()
+            if captureSession.canSetSessionPreset(sessionPreset) { captureSession.sessionPreset = sessionPreset }
+            guard captureSession.canAddInput(input) else {
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddInput
+            }
+            captureSession.addInput(input)
+            guard captureSession.canAddOutput(frameStream.output) else {
+                captureSession.removeInput(input)
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddFrameOutput
+            }
+            captureSession.addOutput(frameStream.output)
+            guard captureSession.canAddOutput(photoOutput) else {
+                captureSession.removeOutput(frameStream.output)
+                captureSession.removeInput(input)
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddPhotoOutput
+            }
+            captureSession.addOutput(photoOutput)
             captureSession.commitConfiguration()
-            throw CameraCaptureSessionError.cannotAddInput
-        }
-        captureSession.addInput(input)
-        captureSession.commitConfiguration()
+        } else {
+            captureSession.beginConfiguration()
+            if captureSession.canSetSessionPreset(sessionPreset) { captureSession.sessionPreset = sessionPreset }
+            guard captureSession.canAddInput(input) else {
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddInput
+            }
+            captureSession.addInput(input)
+            captureSession.commitConfiguration()
 
-        captureSession.beginConfiguration()
-        do {
-            try configureDepthLocked(for: device)
-            try addFrameOutputsLocked()
-            try addPhotoOutputLocked()
-        } catch {
-            removeFrameOutputsLocked()
-            captureSession.removeInput(input)
+            captureSession.beginConfiguration()
+            do {
+                try configureDepthLocked(for: device)
+                try addSynchronizedOutputsLocked()
+                try addPhotoOutputLocked()
+            } catch {
+                removeSynchronizedOutputsLocked()
+                captureSession.removeInput(input)
+                captureSession.commitConfiguration()
+                throw error
+            }
             captureSession.commitConfiguration()
-            throw error
         }
-        captureSession.commitConfiguration()
 
         videoInput = input
         activeDevice = device
@@ -247,26 +271,37 @@ public final class CameraCaptureSession: @unchecked Sendable {
         let newDevice = try makeDevice(request: request)
         guard newDevice.uniqueID != oldDevice.uniqueID else { return }
         let newInput = try makeInput(device: newDevice)
-
         captureRotationObservation = nil
         rotationCoordinator = nil
-        captureSession.beginConfiguration()
-        captureSession.removeInput(oldInput)
-        guard captureSession.canAddInput(newInput) else {
-            restoreLocked(oldInput: oldInput, oldDevice: oldDevice)
-            throw CameraCaptureSessionError.cannotAddInput
-        }
-        captureSession.addInput(newInput)
-        captureSession.commitConfiguration()
 
-        captureSession.beginConfiguration()
-        do { try configureDepthLocked(for: newDevice) }
-        catch {
-            captureSession.removeInput(newInput)
-            restoreLocked(oldInput: oldInput, oldDevice: oldDevice)
-            throw error
+        if synchronizedFrameStream == nil {
+            captureSession.beginConfiguration()
+            captureSession.removeInput(oldInput)
+            guard captureSession.canAddInput(newInput) else {
+                restoreLocked(oldInput: oldInput, oldDevice: oldDevice)
+                throw CameraCaptureSessionError.cannotAddInput
+            }
+            captureSession.addInput(newInput)
+            captureSession.commitConfiguration()
+        } else {
+            captureSession.beginConfiguration()
+            captureSession.removeInput(oldInput)
+            guard captureSession.canAddInput(newInput) else {
+                restoreLocked(oldInput: oldInput, oldDevice: oldDevice)
+                throw CameraCaptureSessionError.cannotAddInput
+            }
+            captureSession.addInput(newInput)
+            captureSession.commitConfiguration()
+
+            captureSession.beginConfiguration()
+            do { try configureDepthLocked(for: newDevice) }
+            catch {
+                captureSession.removeInput(newInput)
+                restoreLocked(oldInput: oldInput, oldDevice: oldDevice)
+                throw error
+            }
+            captureSession.commitConfiguration()
         }
-        captureSession.commitConfiguration()
 
         videoInput = newInput
         activeDevice = newDevice
@@ -281,28 +316,21 @@ public final class CameraCaptureSession: @unchecked Sendable {
         rebuildCaptureRotationCoordinatorLocked(for: oldDevice)
     }
 
-    private func addFrameOutputsLocked() throws {
-        if let stream = synchronizedFrameStream {
-            guard captureSession.canAddOutput(stream.videoOutput) else { throw CameraCaptureSessionError.cannotAddFrameOutput }
-            captureSession.addOutput(stream.videoOutput)
-            guard captureSession.canAddOutput(stream.depthOutput) else {
-                captureSession.removeOutput(stream.videoOutput)
-                throw CameraCaptureSessionError.cannotAddDepthOutput
-            }
-            captureSession.addOutput(stream.depthOutput)
-        } else {
-            guard captureSession.canAddOutput(frameStream.output) else { throw CameraCaptureSessionError.cannotAddFrameOutput }
-            captureSession.addOutput(frameStream.output)
+    private func addSynchronizedOutputsLocked() throws {
+        guard let stream = synchronizedFrameStream else { return }
+        guard captureSession.canAddOutput(stream.videoOutput) else { throw CameraCaptureSessionError.cannotAddFrameOutput }
+        captureSession.addOutput(stream.videoOutput)
+        guard captureSession.canAddOutput(stream.depthOutput) else {
+            captureSession.removeOutput(stream.videoOutput)
+            throw CameraCaptureSessionError.cannotAddDepthOutput
         }
+        captureSession.addOutput(stream.depthOutput)
     }
 
-    private func removeFrameOutputsLocked() {
-        if let stream = synchronizedFrameStream {
-            if captureSession.outputs.contains(where: { $0 === stream.depthOutput }) { captureSession.removeOutput(stream.depthOutput) }
-            if captureSession.outputs.contains(where: { $0 === stream.videoOutput }) { captureSession.removeOutput(stream.videoOutput) }
-        } else if captureSession.outputs.contains(where: { $0 === frameStream.output }) {
-            captureSession.removeOutput(frameStream.output)
-        }
+    private func removeSynchronizedOutputsLocked() {
+        guard let stream = synchronizedFrameStream else { return }
+        if captureSession.outputs.contains(where: { $0 === stream.depthOutput }) { captureSession.removeOutput(stream.depthOutput) }
+        if captureSession.outputs.contains(where: { $0 === stream.videoOutput }) { captureSession.removeOutput(stream.videoOutput) }
     }
 
     private func addPhotoOutputLocked() throws {
