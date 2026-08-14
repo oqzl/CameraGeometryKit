@@ -14,13 +14,18 @@ struct LibrarySessionDiagnostics: Equatable {
     let photoMirrored: Bool?
 }
 
-struct LibraryDeliveredFrameDiagnostics: Equatable {
+struct LibraryDeliveredFrameDiagnostics: Equatable, Sendable {
     let frameID: UInt64
     let cameraPosition: CameraPosition
     let pixelWidth: Int
     let pixelHeight: Int
     let appliedVideoRotationAngle: CGFloat
     let isMirrored: Bool
+}
+
+private struct FrameHUDSnapshot: Sendable {
+    let diagnostics: LibraryDeliveredFrameDiagnostics
+    let statistics: CameraFrameStreamStatistics
 }
 
 @MainActor
@@ -61,23 +66,18 @@ final class CameraSampleModel: ObservableObject {
             librarySessionDiagnostics = makeLibrarySessionDiagnostics()
             errorMessage = nil
 
-            var iterator = camera.frameStream.frames.makeAsyncIterator()
-            while !Task.isCancelled, let frame = await iterator.next() {
-                // Keep the HUD useful without publishing the entire SwiftUI tree
-                // for every captured frame.
-                if frame.id.rawValue % 3 == 0 {
-                    deliveredFrameDiagnostics = LibraryDeliveredFrameDiagnostics(
-                        frameID: frame.id.rawValue,
-                        cameraPosition: frame.geometry.cameraPosition,
-                        pixelWidth: frame.geometry.pixelWidth,
-                        pixelHeight: frame.geometry.pixelHeight,
-                        appliedVideoRotationAngle: frame.geometry.appliedVideoRotationAngle,
-                        isMirrored: frame.geometry.isMirrored
-                    )
-                    frameSummary = "\(frame.geometry.pixelWidth) × \(frame.geometry.pixelHeight) px  •  frame \(frame.id.rawValue)"
-                    statistics = camera.frameStream.statistics()
-                    librarySessionDiagnostics = makeLibrarySessionDiagnostics()
+            let camera = camera
+            let consumer = Task.detached(priority: .userInitiated) { [weak self, camera] in
+                await Self.consumeFrames(camera: camera) { snapshot in
+                    guard let self else { return }
+                    self.apply(snapshot)
                 }
+            }
+
+            await withTaskCancellationHandler {
+                await consumer.value
+            } onCancel: {
+                consumer.cancel()
             }
         } catch is CancellationError {
             // The view-bound task is expected to be cancelled when the screen leaves.
@@ -110,6 +110,41 @@ final class CameraSampleModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    nonisolated private static func consumeFrames(
+        camera: CameraCaptureSession,
+        publish: @escaping @MainActor @Sendable (FrameHUDSnapshot) -> Void
+    ) async {
+        var iterator = camera.frameStream.frames.makeAsyncIterator()
+        let clock = ContinuousClock()
+        var lastPublication = clock.now - .seconds(1)
+
+        while !Task.isCancelled, let frame = await iterator.next() {
+            let now = clock.now
+            guard lastPublication.duration(to: now) >= .milliseconds(500) else { continue }
+            lastPublication = now
+
+            let snapshot = FrameHUDSnapshot(
+                diagnostics: LibraryDeliveredFrameDiagnostics(
+                    frameID: frame.id.rawValue,
+                    cameraPosition: frame.geometry.cameraPosition,
+                    pixelWidth: frame.geometry.pixelWidth,
+                    pixelHeight: frame.geometry.pixelHeight,
+                    appliedVideoRotationAngle: frame.geometry.appliedVideoRotationAngle,
+                    isMirrored: frame.geometry.isMirrored
+                ),
+                statistics: camera.frameStream.statistics()
+            )
+            await publish(snapshot)
+        }
+    }
+
+    private func apply(_ snapshot: FrameHUDSnapshot) {
+        deliveredFrameDiagnostics = snapshot.diagnostics
+        frameSummary = "\(snapshot.diagnostics.pixelWidth) × \(snapshot.diagnostics.pixelHeight) px  •  frame \(snapshot.diagnostics.frameID)"
+        statistics = snapshot.statistics
+        librarySessionDiagnostics = makeLibrarySessionDiagnostics()
     }
 
     private func makeLibrarySessionDiagnostics() -> LibrarySessionDiagnostics? {
