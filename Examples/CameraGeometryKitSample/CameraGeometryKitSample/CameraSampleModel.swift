@@ -47,11 +47,14 @@ final class CameraSampleModel: ObservableObject {
     @Published private(set) var deliveredFrameDiagnostics: LibraryDeliveredFrameDiagnostics?
     @Published private(set) var errorMessage: String?
     @Published var requestedPosition: CameraPosition = .back
+    @Published var requestedDeviceID: String?
 
     let camera: CameraCaptureSession
+    let availableDevices: [CameraDeviceInfo]
 
     init(camera: CameraCaptureSession = CameraCaptureSession(sessionPreset: .high)) {
         self.camera = camera
+        availableDevices = CameraDeviceDiscovery.availableDeviceInfos()
     }
 
     var isRunning: Bool { state.isRunning }
@@ -67,6 +70,7 @@ final class CameraSampleModel: ObservableObject {
     func runSession() async {
         do {
             state = try await camera.start(position: requestedPosition)
+            requestedDeviceID = state.deviceUniqueID
             librarySessionDiagnostics = makeLibrarySessionDiagnostics()
             errorMessage = nil
 
@@ -105,12 +109,35 @@ final class CameraSampleModel: ObservableObject {
             let nextState = try await camera.setCameraPosition(position)
             guard !Task.isCancelled else { return }
             state = nextState
+            requestedDeviceID = nextState.deviceUniqueID
             librarySessionDiagnostics = makeLibrarySessionDiagnostics()
             errorMessage = nil
         } catch is CancellationError {
-            // A newer position request owns the result.
         } catch {
             if !Task.isCancelled {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func switchCamera(toDeviceID uniqueID: String?) async {
+        guard isRunning,
+              let uniqueID,
+              uniqueID != state.deviceUniqueID,
+              let device = availableDevices.first(where: { $0.uniqueID == uniqueID }) else { return }
+
+        do {
+            let nextState = try await camera.setCamera(CameraDeviceRequest(device: device))
+            guard !Task.isCancelled else { return }
+            state = nextState
+            requestedPosition = nextState.cameraPosition
+            requestedDeviceID = nextState.deviceUniqueID
+            librarySessionDiagnostics = makeLibrarySessionDiagnostics()
+            errorMessage = nil
+        } catch is CancellationError {
+        } catch {
+            if !Task.isCancelled {
+                requestedDeviceID = state.deviceUniqueID
                 errorMessage = error.localizedDescription
             }
         }
