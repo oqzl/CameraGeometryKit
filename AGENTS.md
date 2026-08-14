@@ -16,13 +16,25 @@
 - `CameraCaptureSession` owns capture-graph mutation.
 - Keep camera switching and session start/stop serialized through the wrapper.
 - The exposed session is for preview attachment and inspection.
+- Select cameras from AVFoundation-reported device types and capabilities, never from iPhone model identifiers.
+- Preserve the requested `sessionPreset` policy; depth support must not silently choose an unrelated color video format.
+
+## Depth
+- Depth capture is opt-in.
+- Use `AVCaptureDataOutputSynchronizer` for live RGB/depth pairing.
+- A dropped depth sample becomes `CameraSynchronizedFrame.depth == nil`; do not discard the valid color frame.
+- Preserve the color `CameraFrameID` as the identity for downstream depth/mask/Vision derivatives.
+- RGB and depth may have different pixel dimensions; never align them by assuming equal width/height.
+- Choose `activeDepthDataFormat` only from the current `activeFormat.supportedDepthDataFormats`.
+- If requested depth is unavailable for the active video format, fail explicitly rather than silently selecting a different capture policy.
 
 ## Rotation and mirroring
-- `AVCaptureDevice.RotationCoordinator` is the camera rotation source.
+- `AVCaptureDevice.RotationCoordinator` is the AVFoundation camera rotation source.
 - Preview and capture angles are distinct.
-- Do not infer rotation from UI/device orientation, camera position, device model, or pixel dimensions.
+- Do not infer AVFoundation rotation from UI/device orientation, camera position, device model, or pixel dimensions.
 - Recreate the coordinator after camera switch.
 - Use `videoRotationAngle` APIs, not older orientation-enum APIs.
+- Apply the capture rotation/mirroring policy consistently to video and depth connections.
 - Rotation and mirroring are separate policies.
 
 ## Vision
@@ -31,6 +43,11 @@
 - Do not add a request-handler compatibility path.
 - Keep `NormalizedPoint` / `NormalizedRect` typed as Vision geometry until converting through `VisionGeometry`.
 - Use `CameraVisionWorker` for normal live analysis.
+
+## ARKit
+- Keep ARKit support to image/depth geometry adapters.
+- `UIInterfaceOrientation` is allowed only where ARKit's own `displayTransform` contract requires it; do not feed it into AVFoundation rotation logic.
+- Do not make CameraGeometryKit own `ARSession`, anchors, world tracking, raycasts, or scene reconstruction.
 
 ## Real-time processing
 - One expensive operation in flight; newest pending frame only.

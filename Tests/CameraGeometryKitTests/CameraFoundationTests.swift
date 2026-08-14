@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreVideo
 import UIKit
 import XCTest
 @testable import CameraGeometryKit
@@ -13,6 +14,24 @@ final class CameraFoundationTests: XCTestCase {
         XCTAssertNil(state.deviceUniqueID)
         XCTAssertNil(state.deviceTypeRawValue)
         XCTAssertFalse(state.supportsDepthData)
+        XCTAssertFalse(state.depthCaptureEnabled)
+        XCTAssertNil(camera.synchronizedFrameStream)
+    }
+
+    func testDepthCaptureCreatesSynchronizedStream() {
+        let camera = CameraCaptureSession(
+            depthConfiguration: CameraDepthCaptureConfiguration()
+        )
+        XCTAssertNotNil(camera.synchronizedFrameStream)
+    }
+
+    func testDepthConfigurationDefaults() {
+        let configuration = CameraDepthCaptureConfiguration()
+        XCTAssertFalse(configuration.isFilteringEnabled)
+        XCTAssertEqual(
+            configuration.preferredDepthDataTypes,
+            [kCVPixelFormatType_DepthFloat32, kCVPixelFormatType_DepthFloat16]
+        )
     }
 
     func testDeviceRequestPreservesPreferenceOrder() {
