@@ -31,6 +31,8 @@ struct CameraSampleView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let isLandscapeHUD = proxy.size.width > proxy.size.height
+
             ZStack {
                 CameraPreviewView(
                     camera: model.camera,
@@ -46,7 +48,8 @@ struct CameraSampleView: View {
                 VStack(spacing: 0) {
                     statusCard(
                         availableWidth: proxy.size.width,
-                        maxDiagnosticsHeight: max(140, proxy.size.height - 210)
+                        maxDiagnosticsHeight: max(140, proxy.size.height - (isLandscapeHUD ? 145 : 210)),
+                        compactHeader: isLandscapeHUD
                     )
                     Spacer()
                     controls
@@ -77,7 +80,8 @@ struct CameraSampleView: View {
 
     private func statusCard(
         availableWidth: CGFloat,
-        maxDiagnosticsHeight: CGFloat
+        maxDiagnosticsHeight: CGFloat,
+        compactHeader: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -97,17 +101,38 @@ struct CameraSampleView: View {
                 .accessibilityLabel(isDiagnosticsExpanded ? "診断HUDを閉じる" : "診断HUDを開く")
             }
 
-            Text(model.state.deviceName ?? "カメラを起動しています…")
-                .font(.subheadline)
+            if compactHeader {
+                HStack(spacing: 8) {
+                    Text(model.state.deviceName ?? "カメラを起動しています…")
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    Text("•")
+                        .foregroundStyle(.tertiary)
+                    Text(model.frameSummary)
+                        .font(.caption.monospacedDigit())
+                        .lineLimit(1)
+                    Text("•")
+                        .foregroundStyle(.tertiary)
+                    Text("d \(model.statistics.deliveredFrames)  drop \(model.statistics.droppedByAVFoundation)  repl \(model.statistics.replacedInLatestBuffer)")
+                        .font(.caption.monospacedDigit())
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
                 .foregroundStyle(.secondary)
+                .minimumScaleFactor(0.72)
+            } else {
+                Text(model.state.deviceName ?? "カメラを起動しています…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
-            Text(model.frameSummary)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                Text(model.frameSummary)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
 
-            Text("delivered \(model.statistics.deliveredFrames)  •  dropped \(model.statistics.droppedByAVFoundation)  •  replaced \(model.statistics.replacedInLatestBuffer)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                Text("delivered \(model.statistics.deliveredFrames)  •  dropped \(model.statistics.droppedByAVFoundation)  •  replaced \(model.statistics.replacedInLatestBuffer)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
 
             if let errorMessage = model.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
