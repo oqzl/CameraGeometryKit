@@ -1,10 +1,16 @@
 # CameraGeometryKit Sample
 
-This is a small iOS 18+ Swift 6 app that demonstrates the package's camera
-session wrapper, preview rotation, canonical non-mirrored analysis stream, and
-latest-frame statistics.
+An iOS 18+ / Swift 6 lab app for exercising CameraGeometryKit features on real hardware.
 
-The sample uses `AVLayerVideoGravity.resizeAspect` (fit). For geometry and rotation validation, fit is recommended over fill because fill introduces cropping. The library itself does not force a `videoGravity` policy.
+## Tabs
+
+- `Capture`: camera session, preview rotation, frame statistics, orientation diagnostics HUD
+- `Geometry`: `CanonicalPoint` / `CanonicalRect` / `ViewportMapping` fit/fill, mirroring, and tap mapping
+- `Vision`: `CameraVisionWorker` + Swift-native `DetectFaceRectanglesRequest`, Vision → canonical → preview overlay
+- `Depth`: depth-capable device discovery, exact physical-device selection, synchronized RGB/depth, rotation, pixel dimensions, center depth
+- `Image`: PhotosPicker input with `UIImage.cameraGeometryCanonicalized()` / `cameraGeometryDownsampled()` comparison
+
+The sample uses `AVLayerVideoGravity.resizeAspect` (fit). Fit is recommended for geometry/rotation validation because fill adds cropping. The library itself does not force a `videoGravity` policy.
 
 ## Preview rotation
 
@@ -18,22 +24,31 @@ previewRotationBinding = camera.bindPreviewRotation(to: previewLayer)
 
 ## Orientation diagnostics HUD
 
-Use the chevron at the right edge of the top status card to expand the diagnostics HUD downward.
-
-The HUD separates values by where they cross the library/app boundary:
+Use the chevron on the Capture tab to expand the diagnostics HUD.
 
 - `LIBRARY → APP / SESSION`: public `CameraCaptureSession` state plus actual analysis/photo connection values
-- `LIBRARY → APP / FRAME`: pixel size, rotation, and mirroring actually delivered to the app in `CameraFrameGeometry`
+- `LIBRARY → APP / FRAME`: pixel size, rotation, and mirroring delivered in `CameraFrameGeometry`
 - `LIBRARY → APP / PREVIEW`: preview/capture angles used by `CameraPreviewRotationBinding`
-- `APP / PREVIEW + UI`: `UIDeviceOrientation`, `UIInterfaceOrientation`, PreviewLayer bounds/gravity, and the PreviewLayer connection's actual rotation/mirroring/transform
+- `APP / PREVIEW + UI`: device/interface orientation, PreviewLayer bounds/gravity/connection rotation/mirroring/transform
 
-In the normal state, `requested preview` and `preview actual` should match. A mismatch points to the binding / PreviewLayer connection boundary. If `requested preview` itself is unexpected, investigate the library-side RotationCoordinator source.
+Normally `requested preview` and `preview actual` should match. The HUD adds no independent `rotationEffect` or compensating transform. Diagnostics JSON can be copied or shared.
 
-The HUD adds no independent `rotationEffect` or compensating transform. `CameraPreviewRotationBinding` owns preview rotation application; the HUD only observes requested versus actual values. When device orientation changes, the same key values are logged once to the console with the `[OrientationDebug]` prefix.
+## Feature matrix
+
+| Library feature | Sample surface |
+|---|---|
+| `CameraCaptureSession` / `CameraFrameStream` | Capture |
+| `CameraPreviewRotationBinding` / `CameraRotation` | Capture / Vision / Depth |
+| `CameraDeviceDiscovery` / exact `CameraDeviceRequest` | Depth |
+| `CanonicalPoint` / `CanonicalRect` / `ViewportMapping` | Geometry / Vision |
+| `CameraVisionWorker` / `VisionGeometry` | Vision |
+| synchronized RGB + depth / `CameraDepthFrame` | Depth |
+| UIImage canonicalization / downsampling | Image |
+| orientation diagnostics JSON | Capture |
+
+`ImageCoordinateSpace`, `CaptureDevicePoint`, `ARKitFrameAdapter`, and photo capture remain additional verification surfaces to expose from the sample; the goal is to close the matrix completely rather than leave library-only features.
 
 ## Build
-
-From the repository root:
 
 ```bash
 cd Examples/CameraGeometryKitSample
@@ -46,12 +61,4 @@ xcodebuild -project CameraGeometryKitSample.xcodeproj \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-Open the generated project in Xcode to run it on an iOS 18+ device. Camera
-behavior, rotation, mirroring, and camera switching require a real device;
-the simulator is suitable only for checking that the app builds and launches.
-
-The target uses the repository root as a local Swift package dependency. The
-generated `.xcodeproj` is intentionally kept next to `project.yml` so the
-sample can be opened directly after checkout; regenerate it when the project
-definition changes. If you run `xcodebuild` from the repository root instead,
-prefix the project path with `Examples/CameraGeometryKitSample/`.
+Run on iOS 18+ hardware for camera behavior, rotation/mirroring, TrueDepth/LiDAR, and camera-switch validation.
