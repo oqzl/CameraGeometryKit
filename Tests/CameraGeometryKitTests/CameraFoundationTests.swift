@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreVideo
 import XCTest
 @testable import CameraGeometryKit
 
