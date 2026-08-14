@@ -46,7 +46,7 @@ public final class CameraDepthDelivery: NSObject, @unchecked Sendable {
         }
     }
 
-    func dataOutputSynchronizer(
+    public func dataOutputSynchronizer(
         _ synchronizer: AVCaptureDataOutputSynchronizer,
         didOutput collection: AVCaptureSynchronizedDataCollection
     ) {
