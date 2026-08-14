@@ -1,51 +1,48 @@
 # Roadmap
 
-CameraGeometryKit は、実際の camera app で shared semantics が繰り返し必要になった範囲だけ育てます。
+CameraGeometryKit は、実際の camera app で共有が必要になった範囲だけ育てます。
 
-## 実装済み foundation
+## 実装済み
 
 - iOS 18+ / Swift 6
 - canonical point / rect
-- source / crop mapping
-- aspect-fit / aspect-fill mapping
+- crop / fit / fill mapping
 - UIImage canonicalization
 - 薄い `CameraCaptureSession`
+- `AVCaptureDevice.DiscoverySession` による device selection
+- device type の優先順と front/back switching
 - bounded newest-frame stream
-- frame ID と geometry snapshot
-- RotationCoordinator wrapper
-- preview / analysis mirror policy 分離
-- Swift-native Vision `NormalizedPoint` / `NormalizedRect` conversion
-- actor ベース `CameraVisionWorker` と latest-frame / stale-delivery guarantee
+- optional RGB + depth synchronization
+- depth frame geometry metadata
+- frame ID / rotation / mirroring
+- Swift-native Vision geometry / `CameraVisionWorker`
+- ARKit captured-image / canonical geometry adapter
 - diagnostics
 - 英日ドキュメント
-- 機種別 validation structure
+- 実機 validation structure
 
-## Near-term: CameraGeometryLab
+## 0.1.1 validation
 
-専用 verification app を作ります。front/back switch、各 rotation angle、mirror flags、canonical grid、tap marker、geometry verification rectangle、frozen canonical frame、fit/fill switch、frame ID、dropped/replaced counters、saved-photo replay を確認できるようにします。
+Tag 前に wide-angle path と、利用可能な TrueDepth / LiDAR 等の depth-capable hardware で実機確認します。結果は validation evidence として残し、機種別 production branch にはしません。
 
-## Real-device matrix
+## 次候補
 
-まず `docs-ja/validation/iPhone17/` を埋め、使える実機に応じて folder を追加します。OS version ごとの evidence を残し、model-specific production branch にはしません。
-
-## 実需が繰り返したら追加する候補
-
+- CameraGeometryLab
 - photo-output geometry helper
-- `AVCaptureVideoPreviewLayer` への canonical overlay mapping
-- RGB + depth + mask + Vision 用 synchronization token
-- depth-frame geometry
-- MultiCam per-camera rotation snapshot
+- `AVCaptureVideoPreviewLayer` canonical overlay mapping
+- RGB + depth + mask + Vision 用 Accepted Frame token
+- MultiCam stream identity
 - metadata-output geometry adapter
 - custom Metal preview mapping
 - `AVAssetWriter` orientation helper
 - diagnostics export
 
-## 明示的 non-goals
+## Non-goals
 
-- effects library
-- editor UI
+- effects / editor UI
 - generic processing graph
 - universal camera product state machine
-- backward-compatibility layer
-- pre-iOS-18 Vision request-handler compatibility
-- model-specific rotation patch
+- ARSession / world tracking ownership
+- backward compatibility
+- old Vision request-handler path
+- model-specific rotation / camera-selection patch
