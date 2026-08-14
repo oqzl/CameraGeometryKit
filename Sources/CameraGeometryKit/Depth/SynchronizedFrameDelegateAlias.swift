@@ -1,3 +1,0 @@
-import AVFoundation
-
-typealias SynchronizedFrameDelegate = AVCaptureDataOutputSynchronizerDelegate
