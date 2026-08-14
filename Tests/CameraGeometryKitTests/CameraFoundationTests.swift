@@ -42,6 +42,7 @@ final class CameraFoundationTests: XCTestCase {
                 .builtInWideAngleCamera,
             ]
         )
+        XCTAssertNil(request.uniqueID)
         XCTAssertEqual(request.position, .back)
         XCTAssertEqual(
             request.preferredDeviceTypes.map(\.rawValue),
@@ -50,6 +51,25 @@ final class CameraFoundationTests: XCTestCase {
                 AVCaptureDevice.DeviceType.builtInWideAngleCamera.rawValue,
             ]
         )
+    }
+
+    func testDeviceInfoCreatesExactRequest() {
+        let device = CameraDeviceInfo(
+            uniqueID: "camera-id",
+            localizedName: "Back Wide",
+            deviceType: .builtInWideAngleCamera,
+            position: .back,
+            supportsDepthData: false,
+            minZoomFactor: 1,
+            maxZoomFactor: 8
+        )
+
+        let request = CameraDeviceRequest(device: device)
+
+        XCTAssertEqual(request.uniqueID, "camera-id")
+        XCTAssertEqual(request.position, .back)
+        XCTAssertEqual(request.preferredDeviceTypes, [.builtInWideAngleCamera])
+        XCTAssertEqual(device.deviceTypeRawValue, AVCaptureDevice.DeviceType.builtInWideAngleCamera.rawValue)
     }
 
     func testARKitCanonicalPixelSize() {
