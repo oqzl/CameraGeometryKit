@@ -1,7 +1,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-public final class CameraSynchronizedFrameStream: NSObject, @unchecked Sendable {
+public final class CameraDepthDelivery: NSObject, @unchecked Sendable {
     public let videoOutput: AVCaptureVideoDataOutput
     public let depthOutput: AVCaptureDepthDataOutput
     public let frames: AsyncStream<CameraSynchronizedFrame>
