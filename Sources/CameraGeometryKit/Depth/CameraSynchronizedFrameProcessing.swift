@@ -1,0 +1,3 @@
+import AVFoundation
+
+extension CameraSynchronizedFrameStream {}
