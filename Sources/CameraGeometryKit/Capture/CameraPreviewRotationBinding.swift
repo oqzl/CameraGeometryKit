@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import CoreGraphics
 import Foundation
 
 /// Keeps an `AVCaptureVideoPreviewLayer` aligned with the active camera's
@@ -20,9 +19,11 @@ public final class CameraPreviewRotationBinding: @unchecked Sendable {
     private var isStopped = false
 
     init(device: AVCaptureDevice, previewLayer: AVCaptureVideoPreviewLayer) {
+        let rotation = CameraRotation(device: device, previewLayer: previewLayer)
+
         self.device = device
         self.previewLayer = previewLayer
-        rotation = CameraRotation(device: device, previewLayer: previewLayer)
+        self.rotation = rotation
         snapshot = rotation.snapshot
 
         applyPreviewAngle()
@@ -48,9 +49,13 @@ public final class CameraPreviewRotationBinding: @unchecked Sendable {
     /// of the capture session or binding.
     public func refresh() {
         guard !isStopped else { return }
-        snapshot = rotation.snapshot
+        let nextSnapshot = rotation.snapshot
+        let changed = nextSnapshot != snapshot
+        snapshot = nextSnapshot
         applyPreviewAngle()
-        onChange?(snapshot)
+        if changed {
+            onChange?(nextSnapshot)
+        }
     }
 
     public func stop() {
