@@ -522,7 +522,7 @@ private final class PreviewContainerView: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
     private weak var diagnosticsStore: PreviewDiagnosticsStore?
-    private var cameraRotation: CameraRotation?
+    private var previewRotationBinding: CameraPreviewRotationBinding?
     private var latestLibraryRotation: CameraRotationSnapshot?
     private var observedDeviceUniqueID: String?
     private var lastPublishedDiagnostics: AppPreviewDiagnostics?
@@ -548,33 +548,31 @@ private final class PreviewContainerView: UIView {
             previewLayer.videoGravity = .resizeAspect
         }
 
-        if observedDeviceUniqueID != deviceUniqueID || cameraRotation == nil {
-            cameraRotation?.stopObserving()
-            cameraRotation = nil
+        if observedDeviceUniqueID != deviceUniqueID || previewRotationBinding == nil {
+            previewRotationBinding?.stop()
+            previewRotationBinding = nil
             latestLibraryRotation = nil
             observedDeviceUniqueID = deviceUniqueID
 
             if deviceUniqueID != nil,
-               let rotation = camera.makePreviewRotation(previewLayer: previewLayer) {
-                cameraRotation = rotation
-                latestLibraryRotation = rotation.snapshot
-                rotation.observe { [weak self] snapshot in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.latestLibraryRotation = snapshot
-                        self.publishDiagnosticsIfChanged()
-                    }
+               let binding = camera.bindPreviewRotation(to: previewLayer) {
+                previewRotationBinding = binding
+                latestLibraryRotation = binding.snapshot
+                binding.observe { [weak self] snapshot in
+                    guard let self else { return }
+                    self.latestLibraryRotation = snapshot
+                    self.publishDiagnosticsIfChanged()
                 }
             }
         }
 
-        // Observation only: do not compensate for a preview rotation mismatch here.
         publishDiagnosticsIfChanged()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.frame = bounds
+        previewRotationBinding?.refresh()
         publishDiagnosticsIfChanged()
     }
 
