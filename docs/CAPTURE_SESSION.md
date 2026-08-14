@@ -53,10 +53,18 @@ If depth was requested but the selected camera's active video format has no comp
 
 ## Preview and photos
 
+The app owns preview layout and `videoGravity`. CameraGeometryKit can own the camera-specific preview rotation updates:
+
 ```swift
 let previewLayer = AVCaptureVideoPreviewLayer(session: camera.captureSession)
-let previewRotation = camera.makePreviewRotation(previewLayer: previewLayer)
+previewLayer.videoGravity = .resizeAspect
+
+var previewRotationBinding = camera.bindPreviewRotation(to: previewLayer)
 ```
+
+`CameraPreviewRotationBinding` applies the current `RotationCoordinator` preview angle immediately and automatically reapplies later angle changes. Retain the binding while the preview is active. After switching to a different physical camera, stop/discard the old binding and create a new one for the new device.
+
+`CameraRotation`, `observe(_:)`, and `applyPreviewAngle(to:)` remain available as lower-level APIs for diagnostics and specialized pipelines; normal preview code should prefer the binding.
 
 Before issuing a photo request:
 
@@ -67,12 +75,13 @@ camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
 
 The app still owns `AVCapturePhotoSettings` and result/delegate policy.
 
-On a camera switch, invalidate semantic analysis work and recreate preview rotation after the switch succeeds:
+On a camera switch, invalidate semantic analysis work and recreate the preview binding after the switch succeeds:
 
 ```swift
 await vision.invalidate()
 try await camera.switchCamera()
-let previewRotation = camera.makePreviewRotation(previewLayer: previewLayer)
+previewRotationBinding?.stop()
+previewRotationBinding = camera.bindPreviewRotation(to: previewLayer)
 ```
 
 In depth mode a switch to a camera whose active video format cannot provide the requested depth type fails and restores the previous input. The wrapper rebuilds its `RotationCoordinator` for a successful switch and reapplies the capture rotation/non-mirroring policy to video, depth, and photo connections. It never uses front/back fixed angle tables or device-model angle hacks.
