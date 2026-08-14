@@ -45,9 +45,7 @@ struct CameraSampleView: View {
             .padding(.vertical, 12)
         }
         .background(Color.black)
-        .task {
-            await model.runSession()
-        }
+        .task { await model.runSession() }
         .task(id: model.requestedPosition) {
             await model.switchCamera(to: model.requestedPosition)
         }
@@ -72,9 +70,7 @@ struct CameraSampleView: View {
                 Text(model.positionTitle)
                     .font(.subheadline.weight(.medium))
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isDiagnosticsExpanded.toggle()
-                    }
+                    isDiagnosticsExpanded.toggle()
                 } label: {
                     Image(systemName: isDiagnosticsExpanded ? "chevron.up" : "chevron.down")
                         .font(.subheadline.weight(.semibold))
@@ -103,9 +99,7 @@ struct CameraSampleView: View {
             }
 
             if isDiagnosticsExpanded {
-                Divider()
-                    .padding(.vertical, 4)
-
+                Divider().padding(.vertical, 4)
                 ScrollView(.vertical, showsIndicators: true) {
                     diagnosticsContent
                 }
@@ -171,7 +165,6 @@ struct CameraSampleView: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.caption2.monospaced().weight(.bold))
-                .foregroundStyle(.primary)
             content()
         }
     }
@@ -181,8 +174,7 @@ struct CameraSampleView: View {
             Text(label)
                 .frame(width: 112, alignment: .leading)
                 .foregroundStyle(.secondary)
-            Text(value)
-                .textSelection(.enabled)
+            Text(value).textSelection(.enabled)
             Spacer(minLength: 0)
         }
         .font(.caption2.monospaced())
@@ -193,9 +185,7 @@ struct CameraSampleView: View {
             Text("iOS 18+ / Swift 6")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.8))
-
             Spacer()
-
             Button {
                 model.requestedPosition = model.state.cameraPosition == .front ? .back : .front
             } label: {
@@ -237,9 +227,7 @@ struct CameraSampleView: View {
         value.map { $0 ? "true" : "false" } ?? "—"
     }
 
-    private func boolText(_ value: Bool) -> String {
-        value ? "true" : "false"
-    }
+    private func boolText(_ value: Bool) -> String { value ? "true" : "false" }
 
     private func formatSize(width: Int?, height: Int?) -> String {
         guard let width, let height else { return "—" }
@@ -291,15 +279,14 @@ private struct CameraPreviewView: UIViewRepresentable {
 
 @MainActor
 private final class PreviewContainerView: UIView {
-    override class var layerClass: AnyClass {
-        AVCaptureVideoPreviewLayer.self
-    }
+    override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
     var onDiagnostics: (@MainActor (AppPreviewDiagnostics) -> Void)?
 
     private var cameraRotation: CameraRotation?
     private var latestLibraryRotation: CameraRotationSnapshot?
     private var observedDeviceUniqueID: String?
+    private var lastPublishedDiagnostics: AppPreviewDiagnostics?
 
     private var previewLayer: AVCaptureVideoPreviewLayer {
         guard let layer = layer as? AVCaptureVideoPreviewLayer else {
@@ -309,8 +296,12 @@ private final class PreviewContainerView: UIView {
     }
 
     func update(camera: CameraCaptureSession, deviceUniqueID: String?) {
-        previewLayer.session = camera.captureSession
-        previewLayer.videoGravity = .resizeAspectFill
+        if previewLayer.session !== camera.captureSession {
+            previewLayer.session = camera.captureSession
+        }
+        if previewLayer.videoGravity != .resizeAspectFill {
+            previewLayer.videoGravity = .resizeAspectFill
+        }
 
         if observedDeviceUniqueID != deviceUniqueID || cameraRotation == nil {
             cameraRotation?.stopObserving()
@@ -326,25 +317,23 @@ private final class PreviewContainerView: UIView {
                     Task { @MainActor [weak self] in
                         guard let self else { return }
                         self.latestLibraryRotation = snapshot
-                        self.publishDiagnostics()
+                        self.publishDiagnosticsIfChanged()
                     }
                 }
             }
         }
 
-        // Deliberately do not call applyPreviewAngle here. This verification HUD
-        // must expose whether the sample app has actually applied the value that
-        // CameraGeometryKit handed to it.
-        publishDiagnostics()
+        // Observation only: do not compensate for a preview rotation mismatch here.
+        publishDiagnosticsIfChanged()
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.frame = bounds
-        publishDiagnostics()
+        publishDiagnosticsIfChanged()
     }
 
-    private func publishDiagnostics() {
+    private func publishDiagnosticsIfChanged() {
         let connection = previewLayer.connection
         let transform = previewLayer.affineTransform()
         let snapshot = AppPreviewDiagnostics(
@@ -368,8 +357,8 @@ private final class PreviewContainerView: UIView {
                 )
         )
 
-        Task { @MainActor [weak self] in
-            self?.onDiagnostics?(snapshot)
-        }
+        guard snapshot != lastPublishedDiagnostics else { return }
+        lastPublishedDiagnostics = snapshot
+        onDiagnostics?(snapshot)
     }
 }
