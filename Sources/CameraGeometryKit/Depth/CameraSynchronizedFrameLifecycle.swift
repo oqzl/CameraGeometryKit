@@ -1,6 +1,6 @@
 import AVFoundation
 
-extension CameraSynchronizedFrameStream {
+extension CameraDepthDelivery {
     func setCameraPosition(_ position: AVCaptureDevice.Position) {
         lock.withLock { cameraPosition = CameraPosition(position) }
     }
