@@ -25,8 +25,10 @@ y           上 → 下
 - iOS 18+
 - Swift 6
 - iOS 18+ SDK を含む Xcode
-- 外部依存なし
+- ランタイムライブラリ依存なし
 - iOS 18 より前の Vision API 互換レイヤーなし
+
+Package manifest にはドキュメント生成用の Swift-DocC plugin を含みますが、利用アプリにはリンクされません。
 
 ## このパッケージが担当するもの
 
@@ -35,7 +37,9 @@ y           上 → 下
 - aspect fit / aspect fill の preview mapping
 - `UIImage` の canonical 化（orientation `.up` / scale 1）
 - 薄い `CameraCaptureSession` 基盤
+- capability-based camera discovery と exact device selection
 - 最新1フレーム方式の `AVCaptureVideoDataOutput` stream
+- `AVCaptureDataOutputSynchronizer` による optional synchronized RGB/depth delivery
 - frame ID / timestamp / rotation / mirror / dimensions
 - `AVCaptureDevice.RotationCoordinator` の共通処理
 - Preview と Analysis の mirror policy 分離
@@ -138,7 +142,7 @@ canonical image は orientation `.up` / scale `1` です。
 
 ## Capture Session
 
-`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring を担当します。
+`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、optional synchronized depth output、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring を担当します。
 
 ```swift
 let camera = CameraCaptureSession()
@@ -177,6 +181,30 @@ capture 60 fps
     ├─ frame 102 ── 置換
     └─ frame 103 ── 最新 pending
 ```
+
+## Device selection / Depth
+
+Camera selection は AVFoundation が実行時に報告する device type / capability に基づきます。`CameraDeviceInfo` を列挙し、`CameraDeviceRequest(device:)` で exact device を選択できます。
+
+Depth は opt-in です。
+
+```swift
+let camera = CameraCaptureSession(
+    depthConfiguration: CameraDepthCaptureConfiguration()
+)
+try await camera.start(position: .front)
+
+if let stream = camera.synchronizedFrameStream {
+    for await frame in stream.frames {
+        let color = frame.color
+        let depth = frame.depth
+    }
+}
+```
+
+Depth-enabled session は depth-capable device だけを選択します。指定された `sessionPreset` を維持したまま、active video format の `supportedDepthDataFormats` から depth format を選びます。Color output は同じ `camera.frameStream.frames` として引き続き利用でき、同時刻の depth が必要な consumer だけ synchronized stream を使います。
+
+詳細は [Device Selection / Depth Geometry](docs-ja/DEVICE_DEPTH.md)。
 
 ## 回転
 
@@ -232,7 +260,7 @@ Preview layer の focus/exposure point は canonical image space ではありま
 
 ## Diagnostics
 
-実機検証では camera position、preview/capture/analysis rotation angle、mirror flags、frame dimensions、delivered frames、AVFoundation drops、latest-buffer replacement を記録します。
+実機検証では camera position、preview/capture/analysis rotation angle、mirror flags、frame dimensions、delivered frames、AVFoundation drops、latest-buffer replacement を記録します。Synchronized depth delivery では color drop、depth drop、synchronized buffer の置換数も取得できます。
 
 詳細は [Validation](docs-ja/VALIDATION.md)。
 
@@ -260,6 +288,7 @@ Preview layer の focus/exposure point は canonical image space ではありま
 - [Architecture](docs-ja/ARCHITECTURE.md)
 - [Coordinate Spaces](docs-ja/COORDINATE_SPACES.md)
 - [Capture Session](docs-ja/CAPTURE_SESSION.md)
+- [Device Selection / Depth Geometry](docs-ja/DEVICE_DEPTH.md)
 - [Camera Rotation](docs-ja/CAMERA_ROTATION.md)
 - [Vision Pipeline](docs-ja/VISION_PIPELINE.md)
 - [Prohibited Patterns](docs-ja/PROHIBITIONS.md)
