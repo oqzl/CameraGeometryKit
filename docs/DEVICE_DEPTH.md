@@ -1,4 +1,4 @@
-# Device Selection, Depth Geometry, and ARKit
+# Device Selection and Depth Geometry
 
 ## Device selection
 
@@ -71,34 +71,3 @@ The default depth type preference is `DepthFloat32`, then `DepthFloat16`. Filter
 In video-only mode, use the existing `camera.frameStream.frames`. In depth mode, use `camera.synchronizedFrameStream?.frames`; the synchronized stream is the frame source for color/depth analysis.
 
 The same capture rotation and canonical non-mirroring policy is applied to both video and depth connections. RGB and depth may still have different pixel dimensions, so use their geometry metadata rather than assuming equal sizes.
-
-## ARKit adapter
-
-CameraGeometryKit does not own `ARSession`, tracking configuration, anchors, raycasts, world mapping, or scene reconstruction.
-
-`ARKitFrameAdapter` provides the geometry boundary between `ARFrame` camera/depth data and canonical image space. The frame geometry carries `ARCamera.intrinsics` in raw captured-image pixel coordinates and uses ARKit's `displayTransform(for:viewportSize:)` as the orientation/mapping source.
-
-```swift
-let cameraFrame = ARKitFrameAdapter.cameraFrame(
-    from: frame,
-    interfaceOrientation: interfaceOrientation
-)
-
-let canonical = cameraFrame.geometry.canonicalPoint(
-    fromARKitNormalized: normalizedImagePoint
-)
-```
-
-ARKit's display transform can include front-camera presentation mirroring. The adapter removes that presentation reflection when converting points into CameraGeometryKit canonical space, which remains upright and non-mirrored.
-
-Depth adapters cover `capturedDepthData`, `sceneDepth`, and `smoothedSceneDepth`:
-
-```swift
-let depth = ARKitFrameAdapter.depthFrame(
-    from: frame,
-    source: .sceneDepth,
-    interfaceOrientation: interfaceOrientation
-)
-```
-
-Feature availability stays capability-checked by the app/configuration; CameraGeometryKit does not infer it from device models.

@@ -20,7 +20,6 @@ CameraGeometryKit should grow only where real camera applications need shared se
 - explicit preview/analysis mirroring policies
 - Swift-native Vision `NormalizedPoint` / `NormalizedRect` conversion
 - actor-based `CameraVisionWorker` with latest-frame and stale-delivery guarantees
-- ARKit camera/depth geometry adapter
 - diagnostics value model
 - English/Japanese documentation
 - per-device validation structure

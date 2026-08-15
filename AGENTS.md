@@ -45,9 +45,9 @@
 - Use `CameraVisionWorker` for normal live analysis.
 
 ## ARKit
-- Keep ARKit support to image/depth geometry adapters.
-- `UIInterfaceOrientation` is allowed only where ARKit's own `displayTransform` contract requires it; do not feed it into AVFoundation rotation logic.
-- Do not make CameraGeometryKit own `ARSession`, anchors, world tracking, raycasts, or scene reconstruction.
+- ARKit integration belongs in an app or integration target such as ARLab, not in the CameraGeometryKit package.
+- CameraGeometryKit must not import ARKit or own `ARSession`, anchors, world tracking, raycasts, or scene reconstruction.
+- When an integration target uses ARKit's `displayTransform` contract, `UIInterfaceOrientation` may be used there; do not feed it into AVFoundation rotation logic.
 
 ## Real-time processing
 - One expensive operation in flight; newest pending frame only.

@@ -69,8 +69,10 @@ The package manifest is iOS 18+ and Swift 6 only.
 
 ## Sample App
 
-The repository includes a small SwiftUI camera app under
-`Examples/CameraGeometryKitSample`. See its [build instructions](Examples/CameraGeometryKitSample/README.md).
+A separate SwiftUI camera app is maintained in the
+[CameraGeometryKitExamples](https://github.com/oqzl/CameraGeometryKitExamples)
+repository. Check it out next to this repository as `~/git/CameraGeometryKitExamples`
+and follow its build instructions.
 
 ## Canonical coordinates
 

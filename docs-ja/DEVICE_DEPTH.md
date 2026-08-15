@@ -1,4 +1,4 @@
-# Device Selection / Depth Geometry / ARKit
+# Device Selection / Depth Geometry
 
 ## Device selection
 
@@ -71,34 +71,3 @@ Session は color 側の video format を勝手に変更しません。指定さ
 通常の video-only mode では従来どおり `camera.frameStream.frames` を使います。Depth mode では `camera.synchronizedFrameStream?.frames` を color/depth analysis の source にします。
 
 Video と depth の connection には同じ capture rotation と canonical non-mirroring policy を適用します。ただし RGB と depth の pixel dimensions は一致するとは限らないため、各 frame の geometry metadata を使います。
-
-## ARKit adapter
-
-CameraGeometryKit は `ARSession`、tracking configuration、anchor、raycast、world mapping、scene reconstruction を所有しません。
-
-`ARKitFrameAdapter` は `ARFrame` の camera/depth data と canonical image space の boundary だけを担当します。frame geometry は raw captured-image pixel coordinates の `ARCamera.intrinsics` を保持し、向きと mapping の source には ARKit の `displayTransform(for:viewportSize:)` を使います。
-
-```swift
-let cameraFrame = ARKitFrameAdapter.cameraFrame(
-    from: frame,
-    interfaceOrientation: interfaceOrientation
-)
-
-let canonical = cameraFrame.geometry.canonicalPoint(
-    fromARKitNormalized: normalizedImagePoint
-)
-```
-
-ARKit の display transform には front-camera presentation mirror が含まれる場合があります。adapter は canonical space に変換するときその reflection を除去し、upright / non-mirrored を維持します。
-
-`capturedDepthData`、`sceneDepth`、`smoothedSceneDepth` を depth adapter から取得できます。
-
-```swift
-let depth = ARKitFrameAdapter.depthFrame(
-    from: frame,
-    source: .sceneDepth,
-    interfaceOrientation: interfaceOrientation
-)
-```
-
-feature availability は app/configuration が capability check し、機種名から推測しません。

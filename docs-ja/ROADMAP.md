@@ -19,7 +19,6 @@ CameraGeometryKit は、実際の camera app で shared semantics が繰り返�
 - preview / analysis mirror policy 分離
 - Swift-native Vision `NormalizedPoint` / `NormalizedRect` conversion
 - actor ベース `CameraVisionWorker` と latest-frame / stale-delivery guarantee
-- ARKit camera/depth geometry adapter
 - diagnostics
 - 英日ドキュメント
 - 機種別 validation structure
