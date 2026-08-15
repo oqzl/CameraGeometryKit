@@ -8,28 +8,36 @@ import Foundation
 /// position/type fields are used to validate that a stale or mismatched device
 /// is not selected accidentally.
 ///
+/// Set `requiresDepthData` when the selected device must expose at least one
+/// video format with compatible depth data. The active video/depth format pair
+/// is still validated later by `CameraCaptureSession`.
+///
 /// Selection is based entirely on what AVFoundation reports at runtime; callers
 /// should not branch on iPhone model identifiers.
 public struct CameraDeviceRequest: @unchecked Sendable {
     public let uniqueID: String?
     public let position: CameraPosition
     public let preferredDeviceTypes: [AVCaptureDevice.DeviceType]
+    public let requiresDepthData: Bool
 
     public init(
         position: CameraPosition,
         preferredDeviceTypes: [AVCaptureDevice.DeviceType],
-        uniqueID: String? = nil
+        uniqueID: String? = nil,
+        requiresDepthData: Bool = false
     ) {
         self.uniqueID = uniqueID
         self.position = position
         self.preferredDeviceTypes = preferredDeviceTypes
+        self.requiresDepthData = requiresDepthData
     }
 
-    public init(device: CameraDeviceInfo) {
+    public init(device: CameraDeviceInfo, requiresDepthData: Bool = false) {
         self.init(
             position: device.position,
             preferredDeviceTypes: [device.deviceType],
-            uniqueID: device.uniqueID
+            uniqueID: device.uniqueID,
+            requiresDepthData: requiresDepthData
         )
     }
 
@@ -37,6 +45,16 @@ public struct CameraDeviceRequest: @unchecked Sendable {
         CameraDeviceRequest(
             position: position,
             preferredDeviceTypes: [.builtInWideAngleCamera]
+        )
+    }
+
+    func requiringDepthData() -> CameraDeviceRequest {
+        guard !requiresDepthData else { return self }
+        return CameraDeviceRequest(
+            position: position,
+            preferredDeviceTypes: preferredDeviceTypes,
+            uniqueID: uniqueID,
+            requiresDepthData: true
         )
     }
 }
@@ -94,7 +112,8 @@ public enum CameraDeviceDiscovery {
         if let uniqueID = request.uniqueID {
             guard let device = AVCaptureDevice(uniqueID: uniqueID),
                   request.position == CameraPosition(device.position),
-                  request.preferredDeviceTypes.contains(device.deviceType)
+                  request.preferredDeviceTypes.contains(device.deviceType),
+                  !request.requiresDepthData || supportsDepthData(device)
             else {
                 return []
             }
@@ -114,9 +133,11 @@ public enum CameraDeviceDiscovery {
         )
         let discovered = discovery.devices
 
-        return request.preferredDeviceTypes.flatMap { type in
+        let ordered = request.preferredDeviceTypes.flatMap { type in
             discovered.filter { $0.deviceType == type }
         }
+        guard request.requiresDepthData else { return ordered }
+        return ordered.filter(supportsDepthData)
     }
 
     public static func preferredDevice(matching request: CameraDeviceRequest) -> AVCaptureDevice? {
@@ -149,10 +170,14 @@ public enum CameraDeviceDiscovery {
             localizedName: device.localizedName,
             deviceType: device.deviceType,
             position: CameraPosition(device.position),
-            supportsDepthData: device.formats.contains { !$0.supportedDepthDataFormats.isEmpty },
+            supportsDepthData: supportsDepthData(device),
             minZoomFactor: device.minAvailableVideoZoomFactor,
             maxZoomFactor: device.maxAvailableVideoZoomFactor
         )
+    }
+
+    private static func supportsDepthData(_ device: AVCaptureDevice) -> Bool {
+        device.formats.contains { !$0.supportedDepthDataFormats.isEmpty }
     }
 }
 
