@@ -137,7 +137,7 @@ public enum CameraDeviceDiscovery {
             discovered.filter { $0.deviceType == type }
         }
         guard request.requiresDepthData else { return ordered }
-        return ordered.filter(supportsDepthData)
+        return ordered.filter { supportsDepthData($0) }
     }
 
     public static func preferredDevice(matching request: CameraDeviceRequest) -> AVCaptureDevice? {
