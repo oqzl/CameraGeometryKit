@@ -95,7 +95,42 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        deliver(sampleBuffer, connection: connection)
+    }
+
+    public func captureOutput(
+        _ output: AVCaptureOutput,
+        didDrop sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        recordAVFoundationDrop()
+    }
+
+    /// Routes this output through `AVCaptureDataOutputSynchronizer` instead of
+    /// the standalone sample-buffer delegate. The synchronized stream feeds the
+    /// same `frames` AsyncStream so color-only consumers keep one stable source.
+    func useSynchronizedDelivery() {
+        output.setSampleBufferDelegate(nil, queue: nil)
+    }
+
+    @discardableResult
+    func deliverSynchronized(
+        _ sampleBuffer: CMSampleBuffer,
+        connection: AVCaptureConnection
+    ) -> CameraFrame? {
+        deliver(sampleBuffer, connection: connection)
+    }
+
+    func recordSynchronizedDrop() {
+        recordAVFoundationDrop()
+    }
+
+    @discardableResult
+    private func deliver(
+        _ sampleBuffer: CMSampleBuffer,
+        connection: AVCaptureConnection
+    ) -> CameraFrame? {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
 
         let frame: CameraFrame = lock.withLock {
             sequence &+= 1
@@ -125,13 +160,11 @@ public final class CameraFrameStream: NSObject, AVCaptureVideoDataOutputSampleBu
         @unknown default:
             break
         }
+
+        return frame
     }
 
-    public func captureOutput(
-        _ output: AVCaptureOutput,
-        didDrop sampleBuffer: CMSampleBuffer,
-        from connection: AVCaptureConnection
-    ) {
+    private func recordAVFoundationDrop() {
         lock.withLock {
             droppedByAVFoundation &+= 1
         }
