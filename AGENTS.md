@@ -21,12 +21,15 @@
 
 ## Depth
 - Depth capture is opt-in.
+- A depth-enabled session must select a device that reports depth-capable video formats.
 - Use `AVCaptureDataOutputSynchronizer` for live RGB/depth pairing.
+- Reuse the session's `CameraFrameStream.output` as the synchronized color output; do not create a second color frame source for depth mode.
 - A dropped depth sample becomes `CameraSynchronizedFrame.depth == nil`; do not discard the valid color frame.
 - Preserve the color `CameraFrameID` as the identity for downstream depth/mask/Vision derivatives.
 - RGB and depth may have different pixel dimensions; never align them by assuming equal width/height.
 - Choose `activeDepthDataFormat` only from the current `activeFormat.supportedDepthDataFormats`.
 - If requested depth is unavailable for the active video format, fail explicitly rather than silently selecting a different capture policy.
+- Keep bounded delivery and dropped/replaced-frame diagnostics on both color and synchronized streams.
 
 ## Rotation and mirroring
 - `AVCaptureDevice.RotationCoordinator` is the AVFoundation camera rotation source.
