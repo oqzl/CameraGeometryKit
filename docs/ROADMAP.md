@@ -12,9 +12,12 @@ CameraGeometryKit should grow only where real camera applications need shared se
 - UIImage orientation/scale canonicalization
 - thin serialized `CameraCaptureSession`
 - capability-based `AVCaptureDevice.DiscoverySession` selection
+- exact device selection with optional depth capability requirement
 - bounded newest-frame VideoDataOutput stream
 - typed depth-frame geometry and `CameraSynchronizedFrame`
 - optional synchronized video + depth capture with `AVCaptureDataOutputSynchronizer`
+- one shared color `CameraFrameStream` in video-only and depth modes
+- synchronized color/depth drop and latest-buffer diagnostics
 - frame ID and geometry snapshot
 - RotationCoordinator wrapper for video/depth capture connections
 - explicit preview/analysis mirroring policies
@@ -26,7 +29,7 @@ CameraGeometryKit should grow only where real camera applications need shared se
 
 ## 0.1.1 validation
 
-Before tagging 0.1.1, validate the video-only path and synchronized depth path on real hardware. Cover available front TrueDepth and rear depth-capable hardware where possible, including rotation, mirroring, RGB/depth dimensions, and camera switching failure/rollback behavior.
+Before tagging 0.1.1, validate the video-only path and synchronized depth path on real hardware. Cover available front TrueDepth and rear depth-capable hardware where possible, including rotation, mirroring, RGB/depth dimensions, camera switching failure/rollback behavior, and color/depth drop statistics.
 
 Validation evidence belongs under `docs/validation/<device>/`; it must not become model-specific production branches.
 
