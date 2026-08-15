@@ -222,6 +222,8 @@ Preview layer の focus/exposure point は canonical image space ではありま
 
 ## ドキュメント
 
+- [API リファレンス（Swift-DocC）](https://oqzl.github.io/CameraGeometryKit/documentation/camerageometrykit/)
+- [ドキュメント生成と GitHub Pages 公開](docs-ja/DOCUMENTATION.md)
 - [Architecture](docs-ja/ARCHITECTURE.md)
 - [Coordinate Spaces](docs-ja/COORDINATE_SPACES.md)
 - [Capture Session](docs-ja/CAPTURE_SESSION.md)

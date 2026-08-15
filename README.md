@@ -255,6 +255,9 @@ See [Prohibited Patterns](docs/PROHIBITIONS.md). The short version:
 
 ## Documentation
 
+[API Reference (Swift-DocC)](https://oqzl.github.io/CameraGeometryKit/documentation/camerageometrykit/)
+
+- [Documentation build and GitHub Pages publishing](docs/DOCUMENTATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Coordinate Spaces](docs/COORDINATE_SPACES.md)
 - [Capture Session](docs/CAPTURE_SESSION.md)
