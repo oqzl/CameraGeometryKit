@@ -18,11 +18,22 @@ final class CameraFoundationTests: XCTestCase {
         XCTAssertNil(camera.synchronizedFrameStream)
     }
 
-    func testDepthCaptureCreatesSynchronizedStream() {
+    func testDepthCaptureReusesColorFrameOutput() throws {
         let camera = CameraCaptureSession(
             depthConfiguration: CameraDepthCaptureConfiguration()
         )
-        XCTAssertNotNil(camera.synchronizedFrameStream)
+        let stream = try XCTUnwrap(camera.synchronizedFrameStream)
+
+        XCTAssertTrue(stream.videoOutput === camera.frameStream.output)
+        XCTAssertEqual(
+            stream.statistics(),
+            CameraSynchronizedFrameStreamStatistics(
+                deliveredFrames: 0,
+                droppedColorByAVFoundation: 0,
+                droppedDepthByAVFoundation: 0,
+                replacedInLatestBuffer: 0
+            )
+        )
     }
 
     func testDepthConfigurationDefaults() {
@@ -40,9 +51,11 @@ final class CameraFoundationTests: XCTestCase {
             preferredDeviceTypes: [
                 .builtInUltraWideCamera,
                 .builtInWideAngleCamera,
-            ]
+            ],
+            requiresDepthData: true
         )
         XCTAssertNil(request.uniqueID)
+        XCTAssertTrue(request.requiresDepthData)
         XCTAssertEqual(request.position, .back)
         XCTAssertEqual(
             request.preferredDeviceTypes.map(\.rawValue),
@@ -69,7 +82,26 @@ final class CameraFoundationTests: XCTestCase {
         XCTAssertEqual(request.uniqueID, "camera-id")
         XCTAssertEqual(request.position, .back)
         XCTAssertEqual(request.preferredDeviceTypes, [.builtInWideAngleCamera])
+        XCTAssertFalse(request.requiresDepthData)
         XCTAssertEqual(device.deviceTypeRawValue, AVCaptureDevice.DeviceType.builtInWideAngleCamera.rawValue)
+    }
+
+    func testDepthRequirementCanBeAddedWithoutChangingDevicePreference() {
+        let request = CameraDeviceRequest(
+            position: .front,
+            preferredDeviceTypes: [
+                .builtInTrueDepthCamera,
+                .builtInWideAngleCamera,
+            ],
+            uniqueID: "camera-id"
+        )
+
+        let depthRequest = request.requiringDepthData()
+
+        XCTAssertEqual(depthRequest.uniqueID, request.uniqueID)
+        XCTAssertEqual(depthRequest.position, request.position)
+        XCTAssertEqual(depthRequest.preferredDeviceTypes, request.preferredDeviceTypes)
+        XCTAssertTrue(depthRequest.requiresDepthData)
     }
 
     func testVisionWorkerInvalidationAdvancesGeneration() async {
