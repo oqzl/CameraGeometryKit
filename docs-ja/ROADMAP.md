@@ -11,9 +11,12 @@ CameraGeometryKit は、実際の camera app で shared semantics が繰り返�
 - UIImage canonicalization
 - 薄い `CameraCaptureSession`
 - capability-based な `AVCaptureDevice.DiscoverySession` selection
+- optional depth capability requirement 付き exact device selection
 - bounded newest-frame stream
 - typed depth-frame geometry / `CameraSynchronizedFrame`
 - `AVCaptureDataOutputSynchronizer` による optional video + depth 同期 capture
+- video-only / depth mode 共通の単一 color `CameraFrameStream`
+- synchronized color/depth drop と latest-buffer diagnostics
 - frame ID と geometry snapshot
 - video/depth capture connection の RotationCoordinator policy
 - preview / analysis mirror policy 分離
@@ -25,7 +28,7 @@ CameraGeometryKit は、実際の camera app で shared semantics が繰り返�
 
 ## 0.1.1 validation
 
-0.1.1 の tag 前に、video-only path と synchronized depth path を実機で確認します。利用可能な front TrueDepth / rear depth-capable hardware について、rotation、mirroring、RGB/depth dimensions、camera switch 失敗時の rollback を記録します。
+0.1.1 の tag 前に、video-only path と synchronized depth path を実機で確認します。利用可能な front TrueDepth / rear depth-capable hardware について、rotation、mirroring、RGB/depth dimensions、camera switch 失敗時の rollback、color/depth drop statistics を記録します。
 
 結果は `docs-ja/validation/<device>/` に evidence として残し、model-specific production branch にはしません。
 
