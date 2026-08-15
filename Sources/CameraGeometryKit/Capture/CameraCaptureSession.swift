@@ -98,7 +98,14 @@ public final class CameraCaptureSession: @unchecked Sendable {
         self.sessionPreset = sessionPreset
         self.frameStream = frameStream
         self.depthConfiguration = depthConfiguration
-        synchronizedFrameStream = depthConfiguration.map { CameraSynchronizedFrameStream(configuration: $0) }
+        if let depthConfiguration {
+            synchronizedFrameStream = CameraSynchronizedFrameStream(
+                configuration: depthConfiguration,
+                frameStream: frameStream
+            )
+        } else {
+            synchronizedFrameStream = nil
+        }
         sessionQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
     }
 
@@ -107,12 +114,14 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
     @discardableResult
     public func start(position: CameraPosition = .back) async throws -> CameraCaptureSessionState {
-        try await start(request: .wideAngle(position: position))
+        try await start(request: defaultRequest(for: position))
     }
 
     @discardableResult
     public func start(request: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
         guard await Self.cameraAccessGranted() else { throw CameraCaptureSessionError.cameraPermissionDenied }
+        let request = requestForSession(request)
+
         return try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async { [self] in
                 do {
@@ -140,12 +149,14 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
     @discardableResult
     public func setCameraPosition(_ position: CameraPosition) async throws -> CameraCaptureSessionState {
-        try await setCamera(.wideAngle(position: position))
+        try await setCamera(defaultRequest(for: position))
     }
 
     @discardableResult
     public func setCamera(_ request: CameraDeviceRequest) async throws -> CameraCaptureSessionState {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CameraCaptureSessionState, Error>) in
+        let request = requestForSession(request)
+
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CameraCaptureSessionState, Error>) in
             sessionQueue.async { [self] in
                 do {
                     guard isConfigured else { throw CameraCaptureSessionError.notConfigured }
@@ -163,7 +174,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
                 do {
                     guard isConfigured else { throw CameraCaptureSessionError.notConfigured }
                     let target: CameraPosition = currentPositionLocked == .front ? .back : .front
-                    try setCameraLocked(.wideAngle(position: target))
+                    try setCameraLocked(defaultRequest(for: target))
                     continuation.resume(returning: stateLock.withLock { stateStorage })
                 } catch { continuation.resume(throwing: error) }
             }
@@ -200,6 +211,21 @@ public final class CameraCaptureSession: @unchecked Sendable {
 
     private var currentPositionLocked: CameraPosition {
         activeDevice.map { CameraPosition($0.position) } ?? .unspecified
+    }
+
+    private func defaultRequest(for position: CameraPosition) -> CameraDeviceRequest {
+        guard depthConfiguration != nil else {
+            return .wideAngle(position: position)
+        }
+        return CameraDeviceRequest(
+            position: position,
+            preferredDeviceTypes: CameraDeviceDiscovery.videoDeviceTypes,
+            requiresDepthData: true
+        )
+    }
+
+    private func requestForSession(_ request: CameraDeviceRequest) -> CameraDeviceRequest {
+        depthConfiguration == nil ? request : request.requiringDepthData()
     }
 
     private func activeDeviceDoesNotMatchLocked(_ request: CameraDeviceRequest) -> Bool {
