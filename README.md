@@ -59,13 +59,43 @@ The package is infrastructure. Product code remains the composition root.
 
 ## Installation
 
-Add the repository as a Swift Package dependency and import:
+Add the released package repository as a Swift Package dependency. In the
+consuming package's `Package.swift`:
+
+```swift
+dependencies: [
+    .package(
+        url: "https://github.com/oqzl/CameraGeometryKit.git",
+        from: "0.1.0"
+    ),
+],
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: [
+            .product(
+                name: "CameraGeometryKit",
+                package: "CameraGeometryKit"
+            ),
+        ]
+    ),
+]
+```
+
+Alternatively, in Xcode choose **File > Add Package Dependencies** and enter:
+
+```text
+https://github.com/oqzl/CameraGeometryKit.git
+```
+
+Then import the product:
 
 ```swift
 import CameraGeometryKit
 ```
 
-The package manifest is iOS 18+ and Swift 6 only.
+Use the latest released version in the `from:` requirement. The package
+manifest is iOS 18+ and Swift 6 only.
 
 ## Sample App
 

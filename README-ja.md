@@ -59,11 +59,44 @@ y           上 → 下
 
 ## 導入
 
+利用側の `Package.swift` で、リリース済みパッケージを Swift Package の依存関係に
+追加します。
+
+```swift
+dependencies: [
+    .package(
+        url: "https://github.com/oqzl/CameraGeometryKit.git",
+        from: "0.1.0"
+    ),
+],
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: [
+            .product(
+                name: "CameraGeometryKit",
+                package: "CameraGeometryKit"
+            ),
+        ]
+    ),
+]
+```
+
+Xcode からは **File > Add Package Dependencies** を選び、次の URL を入力しても
+追加できます。
+
+```text
+https://github.com/oqzl/CameraGeometryKit.git
+```
+
+追加後、product を import します。
+
 ```swift
 import CameraGeometryKit
 ```
 
-Package 自体が iOS 18+ / Swift 6 固定です。
+`from:` には最新のリリースバージョンを指定してください。Package 自体が
+iOS 18+ / Swift 6 固定です。
 
 ## サンプルアプリ
 
