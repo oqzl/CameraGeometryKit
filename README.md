@@ -25,8 +25,10 @@ mirroring   none
 - iOS 18+
 - Swift 6
 - Xcode with an iOS 18+ SDK
-- No third-party dependencies
+- No runtime library dependencies
 - No backward-compatibility layer for pre-iOS-18 Vision APIs
+
+The package manifest includes the Swift-DocC plugin for documentation generation; it is not linked into consuming apps.
 
 ## What this package owns
 
@@ -35,7 +37,9 @@ mirroring   none
 - aspect-fit / aspect-fill preview mapping
 - photo canonicalization (`UIImage` orientation `.up`, scale 1)
 - a thin serialized `CameraCaptureSession` foundation
+- capability-based camera discovery and exact device selection
 - bounded latest-frame `AVCaptureVideoDataOutput` streaming
+- optional synchronized RGB/depth delivery with `AVCaptureDataOutputSynchronizer`
 - per-frame identity, timestamp, rotation, mirroring, and dimensions
 - `AVCaptureDevice.RotationCoordinator` wrappers
 - explicit preview and analysis mirroring policies
@@ -149,7 +153,7 @@ The canonical image is orientation `.up`, scale `1`, so image-processing geometr
 
 ## Capture session
 
-`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, and canonical non-mirroring.
+`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, optional synchronized depth output, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, and canonical non-mirroring.
 
 ```swift
 let camera = CameraCaptureSession()
@@ -190,6 +194,30 @@ capture 60 fps
 ```
 
 There is no growing queue to catch up later.
+
+## Device selection and depth
+
+Camera selection is based on runtime AVFoundation device types and capabilities. Apps can enumerate `CameraDeviceInfo` values and select an exact physical or virtual device with `CameraDeviceRequest(device:)`.
+
+Depth capture is opt-in:
+
+```swift
+let camera = CameraCaptureSession(
+    depthConfiguration: CameraDepthCaptureConfiguration()
+)
+try await camera.start(position: .front)
+
+if let stream = camera.synchronizedFrameStream {
+    for await frame in stream.frames {
+        let color = frame.color
+        let depth = frame.depth
+    }
+}
+```
+
+A depth-enabled session selects only depth-capable devices. It preserves the requested `sessionPreset`, then selects depth only from the active video format's compatible `supportedDepthDataFormats`. The same color output remains available through `camera.frameStream.frames`; use the synchronized stream when the consumer needs the time-matched depth sample.
+
+See [Device Selection and Depth Geometry](docs/DEVICE_DEPTH.md).
 
 ## Rotation
 
@@ -262,7 +290,7 @@ Do not store that value as a `CanonicalPoint`. For app-semantic points on a cust
 
 ## Diagnostics
 
-During development record at least camera position, preview/capture/analysis rotation angles, mirror flags, frame dimensions, delivered frames, AVFoundation drops, and newest-buffer replacements.
+During development record at least camera position, preview/capture/analysis rotation angles, mirror flags, frame dimensions, delivered frames, AVFoundation drops, and newest-buffer replacements. Synchronized depth delivery additionally reports color drops, depth drops, and synchronized-buffer replacements.
 
 See [Validation](docs/VALIDATION.md).
 
@@ -291,6 +319,7 @@ See [Prohibited Patterns](docs/PROHIBITIONS.md). The short version:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Coordinate Spaces](docs/COORDINATE_SPACES.md)
 - [Capture Session](docs/CAPTURE_SESSION.md)
+- [Device Selection and Depth Geometry](docs/DEVICE_DEPTH.md)
 - [Camera Rotation](docs/CAMERA_ROTATION.md)
 - [Vision Pipeline](docs/VISION_PIPELINE.md)
 - [Prohibited Patterns](docs/PROHIBITIONS.md)
