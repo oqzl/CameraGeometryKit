@@ -11,32 +11,37 @@ CameraGeometryKit should grow only where real camera applications need shared se
 - mirrored presentation mapping
 - UIImage orientation/scale canonicalization
 - thin serialized `CameraCaptureSession`
+- capability-based `AVCaptureDevice.DiscoverySession` selection
+- exact device selection with optional depth capability requirement
 - bounded newest-frame VideoDataOutput stream
+- typed depth-frame geometry and `CameraSynchronizedFrame`
+- optional synchronized video + depth capture with `AVCaptureDataOutputSynchronizer`
+- one shared color `CameraFrameStream` in video-only and depth modes
+- synchronized color/depth drop and latest-buffer diagnostics
 - frame ID and geometry snapshot
-- RotationCoordinator wrapper
-- explicit preview/analysis mirror policies
+- RotationCoordinator wrapper for video/depth capture connections
+- explicit preview/analysis mirroring policies
 - Swift-native Vision `NormalizedPoint` / `NormalizedRect` conversion
 - actor-based `CameraVisionWorker` with latest-frame and stale-delivery guarantees
 - diagnostics value model
 - English/Japanese documentation
 - per-device validation structure
 
+## 0.1.1 validation
+
+Before tagging 0.1.1, validate the video-only path and synchronized depth path on real hardware. Cover available front TrueDepth and rear depth-capable hardware where possible, including rotation, mirroring, RGB/depth dimensions, camera switching failure/rollback behavior, and color/depth drop statistics.
+
+Validation evidence belongs under `docs/validation/<device>/`; it must not become model-specific production branches.
+
 ## Near-term: CameraGeometryLab
 
-Build a dedicated verification app rather than a product camera. It should expose front/back switching, preview/capture/analysis angles, mirror flags, a canonical grid, tap markers, a visible Vision rectangle sample, frozen canonical frames, fit/fill switching, frame IDs, dropped/replaced-frame counters, and saved-photo replay.
-
-The purpose is to make geometry failures obvious in screenshots and device validation records.
-
-## Real-device matrix
-
-Populate `docs/validation/iPhone17/` first, then add hardware folders as devices become available. Evidence should accumulate across OS versions without turning into model-specific production branches.
+Build a dedicated verification app rather than a product camera. It should expose device-type switching, preview/capture/depth angles, mirror flags, canonical grid, tap markers, frozen canonical frames, fit/fill switching, frame IDs, depth availability, and dropped/replaced-frame counters.
 
 ## Possible additions after repeated real-world need
 
 - a small photo-output geometry helper
 - first-class canonical overlay mapping for `AVCaptureVideoPreviewLayer`
-- an Accepted Frame / synchronization token for RGB + depth + mask + Vision
-- depth-frame geometry
+- a generalized Accepted Frame token for RGB + depth + mask + Vision derivatives
 - MultiCam stream identity and per-camera rotation snapshots
 - metadata-output geometry adapters
 - custom Metal preview mapping
@@ -49,6 +54,7 @@ Populate `docs/validation/iPhone17/` first, then add hardware folders as devices
 - editor UI
 - generic processing graph
 - universal camera product state machine
+- ARSession / world-tracking ownership
 - backward-compatibility layers
 - original Vision request-handler compatibility
-- model-specific rotation patches
+- model-specific rotation or camera-selection patches

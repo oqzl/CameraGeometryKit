@@ -3,19 +3,42 @@ import Foundation
 
 /// A capability-based request for a physical or virtual camera device.
 ///
-/// Device types are tried in the order supplied. Selection is based entirely on
-/// what AVFoundation reports at runtime; callers should not branch on iPhone
-/// model identifiers.
+/// With `uniqueID == nil`, device types are tried in the order supplied.
+/// With `uniqueID != nil`, the request targets exactly that device and the
+/// position/type fields are used to validate that a stale or mismatched device
+/// is not selected accidentally.
+///
+/// Set `requiresDepthData` when the selected device must expose at least one
+/// video format with compatible depth data. The active video/depth format pair
+/// is still validated later by `CameraCaptureSession`.
+///
+/// Selection is based entirely on what AVFoundation reports at runtime; callers
+/// should not branch on iPhone model identifiers.
 public struct CameraDeviceRequest: @unchecked Sendable {
+    public let uniqueID: String?
     public let position: CameraPosition
     public let preferredDeviceTypes: [AVCaptureDevice.DeviceType]
+    public let requiresDepthData: Bool
 
     public init(
         position: CameraPosition,
-        preferredDeviceTypes: [AVCaptureDevice.DeviceType]
+        preferredDeviceTypes: [AVCaptureDevice.DeviceType],
+        uniqueID: String? = nil,
+        requiresDepthData: Bool = false
     ) {
+        self.uniqueID = uniqueID
         self.position = position
         self.preferredDeviceTypes = preferredDeviceTypes
+        self.requiresDepthData = requiresDepthData
+    }
+
+    public init(device: CameraDeviceInfo, requiresDepthData: Bool = false) {
+        self.init(
+            position: device.position,
+            preferredDeviceTypes: [device.deviceType],
+            uniqueID: device.uniqueID,
+            requiresDepthData: requiresDepthData
+        )
     }
 
     public static func wideAngle(position: CameraPosition) -> CameraDeviceRequest {
@@ -24,21 +47,34 @@ public struct CameraDeviceRequest: @unchecked Sendable {
             preferredDeviceTypes: [.builtInWideAngleCamera]
         )
     }
+
+    func requiringDepthData() -> CameraDeviceRequest {
+        guard !requiresDepthData else { return self }
+        return CameraDeviceRequest(
+            position: position,
+            preferredDeviceTypes: preferredDeviceTypes,
+            uniqueID: uniqueID,
+            requiresDepthData: true
+        )
+    }
 }
 
-public struct CameraDeviceInfo: Sendable, Hashable {
+public struct CameraDeviceInfo: @unchecked Sendable, Hashable, Identifiable {
     public let uniqueID: String
     public let localizedName: String
-    public let deviceTypeRawValue: String
+    public let deviceType: AVCaptureDevice.DeviceType
     public let position: CameraPosition
     public let supportsDepthData: Bool
     public let minZoomFactor: CGFloat
     public let maxZoomFactor: CGFloat
 
+    public var id: String { uniqueID }
+    public var deviceTypeRawValue: String { deviceType.rawValue }
+
     public init(
         uniqueID: String,
         localizedName: String,
-        deviceTypeRawValue: String,
+        deviceType: AVCaptureDevice.DeviceType,
         position: CameraPosition,
         supportsDepthData: Bool,
         minZoomFactor: CGFloat,
@@ -46,7 +82,7 @@ public struct CameraDeviceInfo: Sendable, Hashable {
     ) {
         self.uniqueID = uniqueID
         self.localizedName = localizedName
-        self.deviceTypeRawValue = deviceTypeRawValue
+        self.deviceType = deviceType
         self.position = position
         self.supportsDepthData = supportsDepthData
         self.minZoomFactor = minZoomFactor
@@ -55,9 +91,35 @@ public struct CameraDeviceInfo: Sendable, Hashable {
 }
 
 public enum CameraDeviceDiscovery {
+    /// Current nondeprecated camera device types relevant to iOS camera apps.
+    public static let videoDeviceTypes: [AVCaptureDevice.DeviceType] = [
+        .builtInUltraWideCamera,
+        .builtInWideAngleCamera,
+        .builtInTelephotoCamera,
+        .builtInDualCamera,
+        .builtInDualWideCamera,
+        .builtInTripleCamera,
+        .builtInTrueDepthCamera,
+        .builtInLiDARDepthCamera,
+        .continuityCamera,
+        .external,
+    ]
+
     /// Returns matching devices in the same priority order as
-    /// `preferredDeviceTypes`.
+    /// `preferredDeviceTypes`. An exact request returns either one matching
+    /// device or an empty array.
     public static func devices(matching request: CameraDeviceRequest) -> [AVCaptureDevice] {
+        if let uniqueID = request.uniqueID {
+            guard let device = AVCaptureDevice(uniqueID: uniqueID),
+                  request.position == CameraPosition(device.position),
+                  request.preferredDeviceTypes.contains(device.deviceType),
+                  !request.requiresDepthData || supportsDepthData(device)
+            else {
+                return []
+            }
+            return [device]
+        }
+
         guard let position = request.position.avFoundationPosition,
               !request.preferredDeviceTypes.isEmpty
         else {
@@ -71,25 +133,51 @@ public enum CameraDeviceDiscovery {
         )
         let discovered = discovery.devices
 
-        return request.preferredDeviceTypes.flatMap { type in
+        let ordered = request.preferredDeviceTypes.flatMap { type in
             discovered.filter { $0.deviceType == type }
         }
+        guard request.requiresDepthData else { return ordered }
+        return ordered.filter { supportsDepthData($0) }
     }
 
     public static func preferredDevice(matching request: CameraDeviceRequest) -> AVCaptureDevice? {
         devices(matching: request).first
     }
 
+    /// Returns stable, app-facing metadata for all devices matching the request.
+    public static func deviceInfos(matching request: CameraDeviceRequest) -> [CameraDeviceInfo] {
+        devices(matching: request).map(info(for:))
+    }
+
+    /// Returns every currently discoverable video device for one position.
+    public static func availableDeviceInfos(position: CameraPosition) -> [CameraDeviceInfo] {
+        deviceInfos(
+            matching: CameraDeviceRequest(
+                position: position,
+                preferredDeviceTypes: videoDeviceTypes
+            )
+        )
+    }
+
+    /// Returns front and back devices suitable for presenting a device picker.
+    public static func availableDeviceInfos() -> [CameraDeviceInfo] {
+        availableDeviceInfos(position: .back) + availableDeviceInfos(position: .front)
+    }
+
     public static func info(for device: AVCaptureDevice) -> CameraDeviceInfo {
         CameraDeviceInfo(
             uniqueID: device.uniqueID,
             localizedName: device.localizedName,
-            deviceTypeRawValue: device.deviceType.rawValue,
+            deviceType: device.deviceType,
             position: CameraPosition(device.position),
-            supportsDepthData: device.formats.contains { !$0.supportedDepthDataFormats.isEmpty },
+            supportsDepthData: supportsDepthData(device),
             minZoomFactor: device.minAvailableVideoZoomFactor,
             maxZoomFactor: device.maxAvailableVideoZoomFactor
         )
+    }
+
+    private static func supportsDepthData(_ device: AVCaptureDevice) -> Bool {
+        device.formats.contains { !$0.supportedDepthDataFormats.isEmpty }
     }
 }
 

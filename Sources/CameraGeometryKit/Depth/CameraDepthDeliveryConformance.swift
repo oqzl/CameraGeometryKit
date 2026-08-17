@@ -1,0 +1,3 @@
+@preconcurrency import AVFoundation
+
+extension CameraSynchronizedFrameStream: AVCaptureDataOutputSynchronizerDelegate {}
