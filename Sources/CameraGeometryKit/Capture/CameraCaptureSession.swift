@@ -7,8 +7,11 @@ public enum CameraCaptureSessionError: Error, LocalizedError, Sendable {
     case cameraUnavailable(CameraPosition)
     case cannotCreateInput(String)
     case cannotAddInput
+    case cannotAddAudioInput
     case cannotAddFrameOutput
     case cannotAddPhotoOutput
+    case cannotAddMovieFileOutput
+    case cannotSetSessionPreset
     case notConfigured
 
     public var errorDescription: String? {
@@ -18,13 +21,19 @@ public enum CameraCaptureSessionError: Error, LocalizedError, Sendable {
         case .cameraUnavailable(let position):
             return "No camera is available for position \(position.rawValue)."
         case .cannotCreateInput(let message):
-            return "Could not create the camera input: \(message)"
+            return "Could not create the capture input: \(message)"
         case .cannotAddInput:
             return "The capture session cannot add the selected camera input."
+        case .cannotAddAudioInput:
+            return "The capture session cannot add the selected audio input."
         case .cannotAddFrameOutput:
             return "The capture session cannot add the video frame output."
         case .cannotAddPhotoOutput:
             return "The capture session cannot add the photo output."
+        case .cannotAddMovieFileOutput:
+            return "The capture session cannot add the movie file output."
+        case .cannotSetSessionPreset:
+            return "The capture session cannot use the requested preset."
         case .notConfigured:
             return "The capture session has not been configured."
         }
@@ -65,11 +74,13 @@ public final class CameraCaptureSession: @unchecked Sendable {
     public let frameStream: CameraFrameStream
     public let photoOutput: AVCapturePhotoOutput
 
-    private let sessionPreset: AVCaptureSession.Preset
+    private let initialSessionPreset: AVCaptureSession.Preset
     private let sessionQueue: DispatchQueue
     private let stateLock = NSLock()
 
     private var videoInput: AVCaptureDeviceInput?
+    private var audioInput: AVCaptureDeviceInput?
+    private var movieFileOutput: AVCaptureMovieFileOutput?
     private var activeDevice: AVCaptureDevice?
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     private var captureRotationObservation: NSKeyValueObservation?
@@ -92,7 +103,7 @@ public final class CameraCaptureSession: @unchecked Sendable {
     ) {
         captureSession = AVCaptureSession()
         photoOutput = AVCapturePhotoOutput()
-        self.sessionPreset = sessionPreset
+        initialSessionPreset = sessionPreset
         self.frameStream = frameStream
         sessionQueue = DispatchQueue(label: queueLabel, qos: .userInitiated)
     }
@@ -196,6 +207,50 @@ public final class CameraCaptureSession: @unchecked Sendable {
         }
     }
 
+    /// Replaces the optional audio-device input while keeping all capture-graph
+    /// mutation serialized with camera switching and session lifecycle changes.
+    ///
+    /// Authorization policy remains the app's responsibility. Pass `nil` to
+    /// detach the current audio input.
+    public func setAudioCaptureDevice(_ device: AVCaptureDevice?) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async { [self] in
+                do {
+                    guard isConfigured else {
+                        throw CameraCaptureSessionError.notConfigured
+                    }
+                    try setAudioCaptureDeviceLocked(device)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// Attaches or detaches an app-owned movie file output and atomically updates
+    /// the session preset. Recording lifecycle and file policy remain app-owned.
+    ///
+    /// Pass `nil` to detach the currently attached movie output.
+    public func setMovieFileOutput(
+        _ output: AVCaptureMovieFileOutput?,
+        sessionPreset: AVCaptureSession.Preset
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            sessionQueue.async { [self] in
+                do {
+                    guard isConfigured else {
+                        throw CameraCaptureSessionError.notConfigured
+                    }
+                    try setMovieFileOutputLocked(output, sessionPreset: sessionPreset)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     public func preparePhotoCapture() async throws {
         try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async { [self] in
@@ -247,8 +302,8 @@ public final class CameraCaptureSession: @unchecked Sendable {
         let input = try makeInput(device: device)
 
         captureSession.beginConfiguration()
-        if captureSession.canSetSessionPreset(sessionPreset) {
-            captureSession.sessionPreset = sessionPreset
+        if captureSession.canSetSessionPreset(initialSessionPreset) {
+            captureSession.sessionPreset = initialSessionPreset
         }
 
         guard captureSession.canAddInput(input) else {
@@ -315,6 +370,84 @@ public final class CameraCaptureSession: @unchecked Sendable {
         updateStateLocked()
     }
 
+    private func setAudioCaptureDeviceLocked(_ device: AVCaptureDevice?) throws {
+        if let current = audioInput, current.device.uniqueID == device?.uniqueID {
+            return
+        }
+
+        let oldInput = audioInput
+        let newInput = try device.map { try makeInput(device: $0) }
+
+        captureSession.beginConfiguration()
+        if let oldInput {
+            captureSession.removeInput(oldInput)
+        }
+
+        if let newInput {
+            guard captureSession.canAddInput(newInput) else {
+                if let oldInput, captureSession.canAddInput(oldInput) {
+                    captureSession.addInput(oldInput)
+                }
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddAudioInput
+            }
+            captureSession.addInput(newInput)
+        }
+        captureSession.commitConfiguration()
+
+        audioInput = newInput
+    }
+
+    private func setMovieFileOutputLocked(
+        _ output: AVCaptureMovieFileOutput?,
+        sessionPreset: AVCaptureSession.Preset
+    ) throws {
+        guard captureSession.canSetSessionPreset(sessionPreset) else {
+            throw CameraCaptureSessionError.cannotSetSessionPreset
+        }
+
+        let oldPreset = captureSession.sessionPreset
+        let oldOutput = movieFileOutput
+        let outputIsChanging: Bool
+        switch (oldOutput, output) {
+        case (nil, nil):
+            outputIsChanging = false
+        case let (lhs?, rhs?):
+            outputIsChanging = lhs !== rhs
+        default:
+            outputIsChanging = true
+        }
+
+        captureSession.beginConfiguration()
+
+        if outputIsChanging, let oldOutput {
+            captureSession.removeOutput(oldOutput)
+        }
+
+        captureSession.sessionPreset = sessionPreset
+
+        if outputIsChanging, let output {
+            guard captureSession.canAddOutput(output) else {
+                captureSession.sessionPreset = oldPreset
+                if let oldOutput, captureSession.canAddOutput(oldOutput) {
+                    captureSession.addOutput(oldOutput)
+                }
+                captureSession.commitConfiguration()
+                throw CameraCaptureSessionError.cannotAddMovieFileOutput
+            }
+            captureSession.addOutput(output)
+        }
+
+        captureSession.commitConfiguration()
+        movieFileOutput = output
+
+        if let rotationCoordinator {
+            applyCaptureConnectionsLocked(
+                captureAngle: rotationCoordinator.videoRotationAngleForHorizonLevelCapture
+            )
+        }
+    }
+
     private func makeDevice(request: CameraDeviceRequest) throws -> AVCaptureDevice {
         guard request.position != .unspecified,
               let device = CameraDeviceDiscovery.preferredDevice(matching: request) else {
@@ -361,10 +494,22 @@ public final class CameraCaptureSession: @unchecked Sendable {
             CameraConnectionConfiguration.configureCanonicalAnalysisMirroring(on: connection)
         }
         applyPhotoConnectionLocked(captureAngle: captureAngle)
+        applyMovieConnectionLocked(captureAngle: captureAngle)
     }
 
     private func applyPhotoConnectionLocked(captureAngle: CGFloat) {
         guard let connection = photoOutput.connection(with: .video) else { return }
+        if connection.isVideoRotationAngleSupported(captureAngle) {
+            connection.videoRotationAngle = captureAngle
+        }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+        }
+    }
+
+    private func applyMovieConnectionLocked(captureAngle: CGFloat) {
+        guard let connection = movieFileOutput?.connection(with: .video) else { return }
         if connection.isVideoRotationAngleSupported(captureAngle) {
             connection.videoRotationAngle = captureAngle
         }
