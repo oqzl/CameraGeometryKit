@@ -25,10 +25,8 @@ mirroring   none
 - iOS 18+
 - Swift 6
 - Xcode with an iOS 18+ SDK
-- No runtime library dependencies
+- No third-party dependencies
 - No backward-compatibility layer for pre-iOS-18 Vision APIs
-
-The package manifest includes the Swift-DocC plugin for documentation generation; it is not linked into consuming apps.
 
 ## What this package owns
 
@@ -37,9 +35,8 @@ The package manifest includes the Swift-DocC plugin for documentation generation
 - aspect-fit / aspect-fill preview mapping
 - photo canonicalization (`UIImage` orientation `.up`, scale 1)
 - a thin serialized `CameraCaptureSession` foundation
-- capability-based camera discovery and exact device selection
+- serialized optional audio-input and app-owned movie-output attachment
 - bounded latest-frame `AVCaptureVideoDataOutput` streaming
-- optional synchronized RGB/depth delivery with `AVCaptureDataOutputSynchronizer`
 - per-frame identity, timestamp, rotation, mirroring, and dimensions
 - `AVCaptureDevice.RotationCoordinator` wrappers
 - explicit preview and analysis mirroring policies
@@ -56,6 +53,7 @@ The package manifest includes the Swift-DocC plugin for documentation generation
 - a universal `CameraManager`
 - concrete Vision model/product semantics
 - best-shot selection, tracking behavior, or product workflows
+- recording lifecycle and media persistence policy
 - storage and sharing policy
 - a generic runtime pipeline graph
 
@@ -63,50 +61,13 @@ The package is infrastructure. Product code remains the composition root.
 
 ## Installation
 
-Add the released package repository as a Swift Package dependency. In the
-consuming package's `Package.swift`:
-
-```swift
-dependencies: [
-    .package(
-        url: "https://github.com/oqzl/CameraGeometryKit.git",
-        from: "0.1.0"
-    ),
-],
-targets: [
-    .target(
-        name: "YourApp",
-        dependencies: [
-            .product(
-                name: "CameraGeometryKit",
-                package: "CameraGeometryKit"
-            ),
-        ]
-    ),
-]
-```
-
-Alternatively, in Xcode choose **File > Add Package Dependencies** and enter:
-
-```text
-https://github.com/oqzl/CameraGeometryKit.git
-```
-
-Then import the product:
+Add the repository as a Swift Package dependency and import:
 
 ```swift
 import CameraGeometryKit
 ```
 
-Use the latest released version in the `from:` requirement. The package
-manifest is iOS 18+ and Swift 6 only.
-
-## Sample App
-
-A separate SwiftUI camera app is maintained in the
-[CameraGeometryKitExamples](https://github.com/oqzl/CameraGeometryKitExamples)
-repository. Check it out next to this repository as `~/git/CameraGeometryKitExamples`
-and follow its build instructions.
+The package manifest is iOS 18+ and Swift 6 only.
 
 ## Canonical coordinates
 
@@ -153,7 +114,7 @@ The canonical image is orientation `.up`, scale `1`, so image-processing geometr
 
 ## Capture session
 
-`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, optional synchronized depth output, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, and canonical non-mirroring.
+`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, canonical non-mirroring, plus narrow serialized attachment points for an optional audio input and an app-owned `AVCaptureMovieFileOutput`.
 
 ```swift
 let camera = CameraCaptureSession()
@@ -174,7 +135,17 @@ try await camera.preparePhotoCapture()
 camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
 ```
 
-Photo settings/delegate policy, preview UI, recording, effects, and product workflow remain app responsibilities.
+For movie recording, the app can keep ownership of its output and recording lifecycle while the wrapper owns graph mutation:
+
+```swift
+let movieOutput = AVCaptureMovieFileOutput()
+let microphone = AVCaptureDevice.default(for: .audio)!
+
+try await camera.setAudioCaptureDevice(microphone)
+try await camera.setMovieFileOutput(movieOutput, sessionPreset: .high)
+```
+
+Microphone authorization, photo settings/delegate policy, preview UI, recording start/stop, temporary files, persistence, effects, and product workflow remain app responsibilities.
 
 See [Capture Session](docs/CAPTURE_SESSION.md).
 
@@ -194,30 +165,6 @@ capture 60 fps
 ```
 
 There is no growing queue to catch up later.
-
-## Device selection and depth
-
-Camera selection is based on runtime AVFoundation device types and capabilities. Apps can enumerate `CameraDeviceInfo` values and select an exact physical or virtual device with `CameraDeviceRequest(device:)`.
-
-Depth capture is opt-in:
-
-```swift
-let camera = CameraCaptureSession(
-    depthConfiguration: CameraDepthCaptureConfiguration()
-)
-try await camera.start(position: .front)
-
-if let stream = camera.synchronizedFrameStream {
-    for await frame in stream.frames {
-        let color = frame.color
-        let depth = frame.depth
-    }
-}
-```
-
-A depth-enabled session selects only depth-capable devices. It preserves the requested `sessionPreset`, then selects depth only from the active video format's compatible `supportedDepthDataFormats`. The same color output remains available through `camera.frameStream.frames`; use the synchronized stream when the consumer needs the time-matched depth sample.
-
-See [Device Selection and Depth Geometry](docs/DEVICE_DEPTH.md).
 
 ## Rotation
 
@@ -290,7 +237,7 @@ Do not store that value as a `CanonicalPoint`. For app-semantic points on a cust
 
 ## Diagnostics
 
-During development record at least camera position, preview/capture/analysis rotation angles, mirror flags, frame dimensions, delivered frames, AVFoundation drops, and newest-buffer replacements. Synchronized depth delivery additionally reports color drops, depth drops, and synchronized-buffer replacements.
+During development record at least camera position, preview/capture/analysis rotation angles, mirror flags, frame dimensions, delivered frames, AVFoundation drops, and newest-buffer replacements.
 
 See [Validation](docs/VALIDATION.md).
 
@@ -313,13 +260,9 @@ See [Prohibited Patterns](docs/PROHIBITIONS.md). The short version:
 
 ## Documentation
 
-[API Reference (Swift-DocC)](https://oqzl.github.io/CameraGeometryKit/documentation/camerageometrykit/)
-
-- [Documentation build and GitHub Pages publishing](docs/DOCUMENTATION.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Coordinate Spaces](docs/COORDINATE_SPACES.md)
 - [Capture Session](docs/CAPTURE_SESSION.md)
-- [Device Selection and Depth Geometry](docs/DEVICE_DEPTH.md)
 - [Camera Rotation](docs/CAMERA_ROTATION.md)
 - [Vision Pipeline](docs/VISION_PIPELINE.md)
 - [Prohibited Patterns](docs/PROHIBITIONS.md)

@@ -13,12 +13,6 @@ let package = Package(
             targets: ["CameraGeometryKit"]
         ),
     ],
-    dependencies: [
-        .package(
-            url: "https://github.com/swiftlang/swift-docc-plugin",
-            from: "1.5.0"
-        ),
-    ],
     targets: [
         .target(
             name: "CameraGeometryKit"

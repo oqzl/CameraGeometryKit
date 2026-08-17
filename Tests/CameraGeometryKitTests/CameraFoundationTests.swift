@@ -1,6 +1,5 @@
 import AVFoundation
 import CoreVideo
-import UIKit
 import XCTest
 @testable import CameraGeometryKit
 
@@ -16,6 +15,31 @@ final class CameraFoundationTests: XCTestCase {
         XCTAssertFalse(state.supportsDepthData)
         XCTAssertFalse(state.depthCaptureEnabled)
         XCTAssertNil(camera.synchronizedFrameStream)
+    }
+
+    func testAuxiliaryCaptureGraphMutationRequiresConfiguredSession() async {
+        let camera = CameraCaptureSession()
+
+        do {
+            try await camera.setAudioCaptureDevice(nil)
+            XCTFail("Expected setAudioCaptureDevice to reject an unconfigured session")
+        } catch CameraCaptureSessionError.notConfigured {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected audio attachment error: \(error)")
+        }
+
+        do {
+            try await camera.setMovieFileOutput(
+                AVCaptureMovieFileOutput(),
+                sessionPreset: .high
+            )
+            XCTFail("Expected setMovieFileOutput to reject an unconfigured session")
+        } catch CameraCaptureSessionError.notConfigured {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected movie attachment error: \(error)")
+        }
     }
 
     func testDepthCaptureReusesColorFrameOutput() throws {
@@ -83,7 +107,10 @@ final class CameraFoundationTests: XCTestCase {
         XCTAssertEqual(request.position, .back)
         XCTAssertEqual(request.preferredDeviceTypes, [.builtInWideAngleCamera])
         XCTAssertFalse(request.requiresDepthData)
-        XCTAssertEqual(device.deviceTypeRawValue, AVCaptureDevice.DeviceType.builtInWideAngleCamera.rawValue)
+        XCTAssertEqual(
+            device.deviceTypeRawValue,
+            AVCaptureDevice.DeviceType.builtInWideAngleCamera.rawValue
+        )
     }
 
     func testDepthRequirementCanBeAddedWithoutChangingDevicePreference() {

@@ -25,10 +25,8 @@ y           上 → 下
 - iOS 18+
 - Swift 6
 - iOS 18+ SDK を含む Xcode
-- ランタイムライブラリ依存なし
+- 外部依存なし
 - iOS 18 より前の Vision API 互換レイヤーなし
-
-Package manifest にはドキュメント生成用の Swift-DocC plugin を含みますが、利用アプリにはリンクされません。
 
 ## このパッケージが担当するもの
 
@@ -37,9 +35,8 @@ Package manifest にはドキュメント生成用の Swift-DocC plugin を含�
 - aspect fit / aspect fill の preview mapping
 - `UIImage` の canonical 化（orientation `.up` / scale 1）
 - 薄い `CameraCaptureSession` 基盤
-- capability-based camera discovery と exact device selection
+- 任意 audio input とアプリ所有 movie output の直列化された着脱
 - 最新1フレーム方式の `AVCaptureVideoDataOutput` stream
-- `AVCaptureDataOutputSynchronizer` による optional synchronized RGB/depth delivery
 - frame ID / timestamp / rotation / mirror / dimensions
 - `AVCaptureDevice.RotationCoordinator` の共通処理
 - Preview と Analysis の mirror policy 分離
@@ -56,6 +53,7 @@ Package manifest にはドキュメント生成用の Swift-DocC plugin を含�
 - 万能 `CameraManager`
 - 具体的な Vision model / 製品上の意味付け
 - Best Shot、Tracking 等の製品ワークフロー
+- recording lifecycle と media persistence policy
 - 保存・共有ポリシー
 - 汎用ランタイムパイプライングラフ
 
@@ -63,51 +61,11 @@ Package manifest にはドキュメント生成用の Swift-DocC plugin を含�
 
 ## 導入
 
-利用側の `Package.swift` で、リリース済みパッケージを Swift Package の依存関係に
-追加します。
-
-```swift
-dependencies: [
-    .package(
-        url: "https://github.com/oqzl/CameraGeometryKit.git",
-        from: "0.1.0"
-    ),
-],
-targets: [
-    .target(
-        name: "YourApp",
-        dependencies: [
-            .product(
-                name: "CameraGeometryKit",
-                package: "CameraGeometryKit"
-            ),
-        ]
-    ),
-]
-```
-
-Xcode からは **File > Add Package Dependencies** を選び、次の URL を入力しても
-追加できます。
-
-```text
-https://github.com/oqzl/CameraGeometryKit.git
-```
-
-追加後、product を import します。
-
 ```swift
 import CameraGeometryKit
 ```
 
-`from:` には最新のリリースバージョンを指定してください。Package 自体が
-iOS 18+ / Swift 6 固定です。
-
-## サンプルアプリ
-
-SwiftUI のカメラサンプルは、独立した
-[CameraGeometryKitExamples](https://github.com/oqzl/CameraGeometryKitExamples)
-リポジトリで管理しています。このリポジトリの隣に
-`~/git/CameraGeometryKitExamples` として checkout し、そちらのビルド手順に従ってください。
+Package 自体が iOS 18+ / Swift 6 固定です。
 
 ## Canonical 座標
 
@@ -142,7 +100,7 @@ canonical image は orientation `.up` / scale `1` です。
 
 ## Capture Session
 
-`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、optional synchronized depth output、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring を担当します。
+`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring に加え、任意の audio input とアプリ所有 `AVCaptureMovieFileOutput` を直列化して接続する最小の入口を担当します。
 
 ```swift
 let camera = CameraCaptureSession()
@@ -163,7 +121,17 @@ try await camera.preparePhotoCapture()
 camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
 ```
 
-Photo settings/delegate、preview UI、recording、effects、製品ワークフローはアプリ側の責務です。
+movie recording では output と recording lifecycle をアプリ所有のままにし、capture graph の変更だけ wrapper に任せられます。
+
+```swift
+let movieOutput = AVCaptureMovieFileOutput()
+let microphone = AVCaptureDevice.default(for: .audio)!
+
+try await camera.setAudioCaptureDevice(microphone)
+try await camera.setMovieFileOutput(movieOutput, sessionPreset: .high)
+```
+
+Microphone authorization、Photo settings/delegate、preview UI、recording 開始/停止、temporary file、保存、effects、製品ワークフローはアプリ側の責務です。
 
 詳細は [Capture Session](docs-ja/CAPTURE_SESSION.md)。
 
@@ -181,30 +149,6 @@ capture 60 fps
     ├─ frame 102 ── 置換
     └─ frame 103 ── 最新 pending
 ```
-
-## Device selection / Depth
-
-Camera selection は AVFoundation が実行時に報告する device type / capability に基づきます。`CameraDeviceInfo` を列挙し、`CameraDeviceRequest(device:)` で exact device を選択できます。
-
-Depth は opt-in です。
-
-```swift
-let camera = CameraCaptureSession(
-    depthConfiguration: CameraDepthCaptureConfiguration()
-)
-try await camera.start(position: .front)
-
-if let stream = camera.synchronizedFrameStream {
-    for await frame in stream.frames {
-        let color = frame.color
-        let depth = frame.depth
-    }
-}
-```
-
-Depth-enabled session は depth-capable device だけを選択します。指定された `sessionPreset` を維持したまま、active video format の `supportedDepthDataFormats` から depth format を選びます。Color output は同じ `camera.frameStream.frames` として引き続き利用でき、同時刻の depth が必要な consumer だけ synchronized stream を使います。
-
-詳細は [Device Selection / Depth Geometry](docs-ja/DEVICE_DEPTH.md)。
 
 ## 回転
 
@@ -260,7 +204,7 @@ Preview layer の focus/exposure point は canonical image space ではありま
 
 ## Diagnostics
 
-実機検証では camera position、preview/capture/analysis rotation angle、mirror flags、frame dimensions、delivered frames、AVFoundation drops、latest-buffer replacement を記録します。Synchronized depth delivery では color drop、depth drop、synchronized buffer の置換数も取得できます。
+実機検証では camera position、preview/capture/analysis rotation angle、mirror flags、frame dimensions、delivered frames、AVFoundation drops、latest-buffer replacement を記録します。
 
 詳細は [Validation](docs-ja/VALIDATION.md)。
 
@@ -283,12 +227,9 @@ Preview layer の focus/exposure point は canonical image space ではありま
 
 ## ドキュメント
 
-- [API リファレンス（Swift-DocC）](https://oqzl.github.io/CameraGeometryKit/documentation/camerageometrykit/)
-- [ドキュメント生成と GitHub Pages 公開](docs-ja/DOCUMENTATION.md)
 - [Architecture](docs-ja/ARCHITECTURE.md)
 - [Coordinate Spaces](docs-ja/COORDINATE_SPACES.md)
 - [Capture Session](docs-ja/CAPTURE_SESSION.md)
-- [Device Selection / Depth Geometry](docs-ja/DEVICE_DEPTH.md)
 - [Camera Rotation](docs-ja/CAMERA_ROTATION.md)
 - [Vision Pipeline](docs-ja/VISION_PIPELINE.md)
 - [Prohibited Patterns](docs-ja/PROHIBITIONS.md)
