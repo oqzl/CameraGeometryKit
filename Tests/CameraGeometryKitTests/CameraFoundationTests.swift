@@ -15,6 +15,31 @@ final class CameraFoundationTests: XCTestCase {
         XCTAssertFalse(state.supportsDepthData)
     }
 
+    func testAuxiliaryCaptureGraphMutationRequiresConfiguredSession() async {
+        let camera = CameraCaptureSession()
+
+        do {
+            try await camera.setAudioCaptureDevice(nil)
+            XCTFail("Expected setAudioCaptureDevice to reject an unconfigured session")
+        } catch CameraCaptureSessionError.notConfigured {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected audio attachment error: \(error)")
+        }
+
+        do {
+            try await camera.setMovieFileOutput(
+                AVCaptureMovieFileOutput(),
+                sessionPreset: .high
+            )
+            XCTFail("Expected setMovieFileOutput to reject an unconfigured session")
+        } catch CameraCaptureSessionError.notConfigured {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected movie attachment error: \(error)")
+        }
+    }
+
     func testDeviceRequestPreservesPreferenceOrder() {
         let request = CameraDeviceRequest(
             position: .back,

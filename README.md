@@ -35,6 +35,7 @@ mirroring   none
 - aspect-fit / aspect-fill preview mapping
 - photo canonicalization (`UIImage` orientation `.up`, scale 1)
 - a thin serialized `CameraCaptureSession` foundation
+- serialized optional audio-input and app-owned movie-output attachment
 - bounded latest-frame `AVCaptureVideoDataOutput` streaming
 - per-frame identity, timestamp, rotation, mirroring, and dimensions
 - `AVCaptureDevice.RotationCoordinator` wrappers
@@ -52,6 +53,7 @@ mirroring   none
 - a universal `CameraManager`
 - concrete Vision model/product semantics
 - best-shot selection, tracking behavior, or product workflows
+- recording lifecycle and media persistence policy
 - storage and sharing policy
 - a generic runtime pipeline graph
 
@@ -112,7 +114,7 @@ The canonical image is orientation `.up`, scale `1`, so image-processing geometr
 
 ## Capture session
 
-`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, and canonical non-mirroring.
+`CameraCaptureSession` is the standard thin starting point. It owns camera authorization, one active video input, `CameraFrameStream`, `AVCapturePhotoOutput`, serialized start/stop and camera switching, capture rotation, canonical non-mirroring, plus narrow serialized attachment points for an optional audio input and an app-owned `AVCaptureMovieFileOutput`.
 
 ```swift
 let camera = CameraCaptureSession()
@@ -133,7 +135,17 @@ try await camera.preparePhotoCapture()
 camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
 ```
 
-Photo settings/delegate policy, preview UI, recording, effects, and product workflow remain app responsibilities.
+For movie recording, the app can keep ownership of its output and recording lifecycle while the wrapper owns graph mutation:
+
+```swift
+let movieOutput = AVCaptureMovieFileOutput()
+let microphone = AVCaptureDevice.default(for: .audio)!
+
+try await camera.setAudioCaptureDevice(microphone)
+try await camera.setMovieFileOutput(movieOutput, sessionPreset: .high)
+```
+
+Microphone authorization, photo settings/delegate policy, preview UI, recording start/stop, temporary files, persistence, effects, and product workflow remain app responsibilities.
 
 See [Capture Session](docs/CAPTURE_SESSION.md).
 

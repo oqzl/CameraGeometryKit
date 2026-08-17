@@ -35,6 +35,7 @@ y           上 → 下
 - aspect fit / aspect fill の preview mapping
 - `UIImage` の canonical 化（orientation `.up` / scale 1）
 - 薄い `CameraCaptureSession` 基盤
+- 任意 audio input とアプリ所有 movie output の直列化された着脱
 - 最新1フレーム方式の `AVCaptureVideoDataOutput` stream
 - frame ID / timestamp / rotation / mirror / dimensions
 - `AVCaptureDevice.RotationCoordinator` の共通処理
@@ -52,6 +53,7 @@ y           上 → 下
 - 万能 `CameraManager`
 - 具体的な Vision model / 製品上の意味付け
 - Best Shot、Tracking 等の製品ワークフロー
+- recording lifecycle と media persistence policy
 - 保存・共有ポリシー
 - 汎用ランタイムパイプライングラフ
 
@@ -98,7 +100,7 @@ canonical image は orientation `.up` / scale `1` です。
 
 ## Capture Session
 
-`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring を担当します。
+`CameraCaptureSession` を標準の薄い開始点とします。camera authorization、単一 video input、`CameraFrameStream`、`AVCapturePhotoOutput`、直列化した start/stop と camera switch、capture rotation、canonical non-mirroring に加え、任意の audio input とアプリ所有 `AVCaptureMovieFileOutput` を直列化して接続する最小の入口を担当します。
 
 ```swift
 let camera = CameraCaptureSession()
@@ -119,7 +121,17 @@ try await camera.preparePhotoCapture()
 camera.photoOutput.capturePhoto(with: settings, delegate: delegate)
 ```
 
-Photo settings/delegate、preview UI、recording、effects、製品ワークフローはアプリ側の責務です。
+movie recording では output と recording lifecycle をアプリ所有のままにし、capture graph の変更だけ wrapper に任せられます。
+
+```swift
+let movieOutput = AVCaptureMovieFileOutput()
+let microphone = AVCaptureDevice.default(for: .audio)!
+
+try await camera.setAudioCaptureDevice(microphone)
+try await camera.setMovieFileOutput(movieOutput, sessionPreset: .high)
+```
+
+Microphone authorization、Photo settings/delegate、preview UI、recording 開始/停止、temporary file、保存、effects、製品ワークフローはアプリ側の責務です。
 
 詳細は [Capture Session](docs-ja/CAPTURE_SESSION.md)。
 
